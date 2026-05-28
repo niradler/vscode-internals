@@ -18,8 +18,7 @@ tsconfig.json
 **/*.map
 **/*.ts
 !out/**/*.js
-BACKLOG.md
-RELEASE.md
+docs/**
 **/.DS_Store
 **/Thumbs.db
 *.vsix

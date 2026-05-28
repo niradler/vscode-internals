@@ -229,7 +229,7 @@ The registry is intentionally the only thing the dispatcher and OpenAPI builder 
 
 Issues and pull requests are welcome at [github.com/niradler/vscode-internals](https://github.com/niradler/vscode-internals/issues). Bug reports, endpoint requests, and patches are all useful.
 
-See `BACKLOG.md` for ideas that are queued up but not yet started — a good place to pick something to work on.
+See [`docs/backlog.md`](docs/backlog.md) for ideas that are queued up but not yet started — a good place to pick something to work on. Maintainer docs (publishing, release notes) live in [`docs/`](docs/).
 
 ## License
 
