@@ -9,7 +9,9 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "keywords": [
     "api",
     "rest",
@@ -35,14 +37,31 @@
   },
   "homepage": "https://github.com/niradler/vscode-internals#readme",
   "main": "./out/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "commands": [
-      { "command": "vscodeInternals.showToken", "title": "VSCode Internals: Show Token" },
-      { "command": "vscodeInternals.copyToken", "title": "VSCode Internals: Copy Token to Clipboard" },
-      { "command": "vscodeInternals.regenerateToken", "title": "VSCode Internals: Regenerate Token" },
-      { "command": "vscodeInternals.openDocs", "title": "VSCode Internals: Open API Docs (Swagger UI)" },
-      { "command": "vscodeInternals.showStatus", "title": "VSCode Internals: Show Server Status" }
+      {
+        "command": "vscodeInternals.showToken",
+        "title": "VSCode Internals: Show Token"
+      },
+      {
+        "command": "vscodeInternals.copyToken",
+        "title": "VSCode Internals: Copy Token to Clipboard"
+      },
+      {
+        "command": "vscodeInternals.regenerateToken",
+        "title": "VSCode Internals: Regenerate Token"
+      },
+      {
+        "command": "vscodeInternals.openDocs",
+        "title": "VSCode Internals: Open API Docs (Swagger UI)"
+      },
+      {
+        "command": "vscodeInternals.showStatus",
+        "title": "VSCode Internals: Show Server Status"
+      }
     ],
     "configuration": {
       "title": "VSCode Internals",
@@ -69,7 +88,12 @@
         },
         "vscodeInternals.logLevel": {
           "type": "string",
-          "enum": ["error", "warn", "info", "debug"],
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ],
           "default": "info",
           "description": "Log verbosity in the VSCode Internals output channel."
         }
@@ -93,7 +117,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "swagger-ui-dist": "^5.17.14"
   }
 }
