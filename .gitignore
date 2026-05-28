@@ -1,0 +1,10 @@
+node_modules/
+out/
+*.vsix
+.vscode-test/
+*.log
+.DS_Store
+Thumbs.db
+.dev-token
+scripts/e2e-results.json
+.env

@@ -1,0 +1,99 @@
+{
+  "name": "vscode-internals",
+  "displayName": "VSCode Internals",
+  "description": "Expose the full vscode.* API as a token-protected local REST + SSE service with dynamic OpenAPI. Spiritual successor to vs-rest-api.",
+  "version": "0.1.0",
+  "publisher": "niradler",
+  "license": "MIT",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": [
+    "api",
+    "rest",
+    "http",
+    "openapi",
+    "swagger",
+    "automation",
+    "sse",
+    "language-model",
+    "copilot",
+    "agent"
+  ],
+  "galleryBanner": {
+    "color": "#1E1E1E",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niradler/vscode-internals.git"
+  },
+  "bugs": {
+    "url": "https://github.com/niradler/vscode-internals/issues"
+  },
+  "homepage": "https://github.com/niradler/vscode-internals#readme",
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "vscodeInternals.showToken", "title": "VSCode Internals: Show Token" },
+      { "command": "vscodeInternals.copyToken", "title": "VSCode Internals: Copy Token to Clipboard" },
+      { "command": "vscodeInternals.regenerateToken", "title": "VSCode Internals: Regenerate Token" },
+      { "command": "vscodeInternals.openDocs", "title": "VSCode Internals: Open API Docs (Swagger UI)" },
+      { "command": "vscodeInternals.showStatus", "title": "VSCode Internals: Show Server Status" }
+    ],
+    "configuration": {
+      "title": "VSCode Internals",
+      "properties": {
+        "vscodeInternals.port": {
+          "type": "number",
+          "default": 7891,
+          "description": "Port the local HTTP server binds to. Restart required."
+        },
+        "vscodeInternals.host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Bind address. Default 127.0.0.1 (loopback only). Set to 0.0.0.0 only if you understand the security implications — anyone with network access to this machine could drive your editor with a leaked token."
+        },
+        "vscodeInternals.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the server automatically on extension activation."
+        },
+        "vscodeInternals.maxBodySizeBytes": {
+          "type": "number",
+          "default": 10485760,
+          "description": "Maximum request body size in bytes (default 10 MiB). Increase if you intend to send large file contents."
+        },
+        "vscodeInternals.logLevel": {
+          "type": "string",
+          "enum": ["error", "warn", "info", "debug"],
+          "default": "info",
+          "description": "Log verbosity in the VSCode Internals output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "tsc --noEmit -p ./",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "swagger-ui-dist": "^5.17.14"
+  }
+}
