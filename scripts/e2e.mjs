@@ -298,6 +298,67 @@ async function main() {
     await testSseHeartbeat(url, token);
   });
 
+  await t.run('events: /events/wait timeout path', async () => {
+    const t0 = Date.now();
+    const r = await t.req('GET', '/events/wait?subscribe=onDidChangeWindowState&timeoutMs=1200');
+    const elapsed = Date.now() - t0;
+    if (r.timeout !== true) throw new Error(`expected timeout:true, got ${JSON.stringify(r)}`);
+    if (elapsed < 1100 || elapsed > 4000) {
+      throw new Error(`elapsed ${elapsed}ms outside expected 1100-4000 window`);
+    }
+  });
+
+  await t.run('events: /events/wait live event via /workspace/applyEdit', async () => {
+    const doc = await t.req('POST', '/workspace/openTextDocument', {
+      body: { content: 'seed\n', language: 'plaintext' },
+    });
+    const uri = doc.uri.toString;
+    const waitUrl = `${url}/events/wait?subscribe=onDidChangeTextDocument&timeoutMs=8000`;
+    const waitPromise = fetch(waitUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`wait status ${r.status}`);
+      return r.json();
+    });
+    await new Promise((r) => setTimeout(r, 250));
+    await t.req('POST', '/workspace/applyEdit', {
+      body: {
+        edits: [{
+          uri,
+          changes: [{
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            newText: 'XX-',
+          }],
+        }],
+      },
+    });
+    const evt = await waitPromise;
+    if (evt.eventName !== 'onDidChangeTextDocument') {
+      throw new Error(`unexpected eventName ${evt.eventName}`);
+    }
+    const change = evt.payload?.contentChanges?.[0];
+    if (change?.text !== 'XX-') throw new Error(`expected inserted text "XX-", got ${JSON.stringify(change)}`);
+  });
+
+  await t.run('window: /window/insertSnippet expands tab-stops', async () => {
+    const doc = await t.req('POST', '/workspace/openTextDocument', {
+      body: { content: '', language: 'plaintext' },
+    });
+    await t.req('POST', '/window/showTextDocument', { body: { uri: doc.uri.toString } });
+    const res = await t.req('POST', '/window/insertSnippet', {
+      body: { snippet: 'fn(${1:name}, ${2:arg}) => $0' },
+    });
+    if (res.ok !== true) throw new Error(`expected ok:true, got ${JSON.stringify(res)}`);
+    await t.req('POST', '/window/setSelection', {
+      body: { selections: [{ anchor: { line: 0, character: 0 }, active: { line: 0, character: 0 } }] },
+    });
+    const after = await t.req('GET', '/window/selectionText');
+    if (!after.text || !after.text.startsWith('fn(name, arg) =>')) {
+      throw new Error(`snippet didn't expand defaults; got: ${JSON.stringify(after.text)}`);
+    }
+  });
+
   await t.run('404: unknown route returns structured error', async () => {
     const r = await fetch(`${url}/this-does-not-exist`, {
       headers: { Authorization: `Bearer ${token}` },

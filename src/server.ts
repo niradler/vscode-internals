@@ -120,6 +120,110 @@ export class InternalsServer {
       res.json({ events: events.listAvailable() });
     });
 
+    // Long-poll: GET /events/wait?subscribe=…&filter=<json>&match=first|all&timeoutMs=…
+    this.app.get('/events/wait', (req, res) => {
+      const subscribeParam = String(req.query.subscribe ?? '').trim();
+      const names = subscribeParam ? subscribeParam.split(',').map((s) => s.trim()).filter(Boolean) : [];
+      if (names.length === 0) {
+        res.status(400).json({
+          error: 'no_subscriptions',
+          message: 'Provide ?subscribe=event1,event2',
+          available: events.listAvailable(),
+        });
+        return;
+      }
+
+      let filter: Record<string, unknown> | undefined;
+      if (req.query.filter !== undefined) {
+        try {
+          const parsed = JSON.parse(String(req.query.filter));
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('filter must be a JSON object');
+          }
+          filter = parsed as Record<string, unknown>;
+        } catch (err) {
+          res.status(400).json({ error: 'bad_filter', message: (err as Error).message });
+          return;
+        }
+      }
+
+      const match = String(req.query.match ?? 'first');
+      if (match !== 'first' && match !== 'all') {
+        res.status(400).json({ error: 'bad_match', message: 'match must be "first" or "all"' });
+        return;
+      }
+
+      const timeoutMs = Math.min(Math.max(Number(req.query.timeoutMs ?? 30_000), 1_000), 300_000);
+      const started = Date.now();
+
+      const matches = (payload: unknown): boolean => {
+        if (!filter) return true;
+        if (payload === null || typeof payload !== 'object') return false;
+        const obj = payload as Record<string, unknown>;
+        for (const [k, v] of Object.entries(filter)) {
+          if (obj[k] !== v) return false;
+        }
+        return true;
+      };
+
+      let unsubscribe: (() => void) | undefined;
+      let timer: NodeJS.Timeout | undefined;
+      let settled = false;
+
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        unsubscribe?.();
+      };
+
+      if (match === 'first') {
+        try {
+          unsubscribe = events.subscribe(names, (eventName, payload) => {
+            if (settled) return;
+            if (!matches(payload)) return;
+            cleanup();
+            res.json({ eventName, payload, waitedMs: Date.now() - started });
+          });
+        } catch (err) {
+          res.status(400).json({ error: 'subscribe_failed', message: (err as Error).message });
+          return;
+        }
+        timer = setTimeout(() => {
+          if (settled) return;
+          cleanup();
+          res.json({ timeout: true, waitedMs: Date.now() - started });
+        }, timeoutMs);
+        req.on('close', cleanup);
+        req.on('error', cleanup);
+        return;
+      }
+
+      try {
+        unsubscribe = events.subscribe(names, (eventName, payload) => {
+          if (settled) return;
+          if (!matches(payload)) return;
+          writeSseEvent(res, eventName, payload);
+        });
+      } catch (err) {
+        res.status(400).json({ error: 'subscribe_failed', message: (err as Error).message });
+        return;
+      }
+      writeSseHeaders(res);
+      writeSseEvent(res, 'ready', { subscribed: names, filter: filter ?? null, timeoutMs });
+      const heartbeat = setInterval(() => res.write(': ping\n\n'), 25_000);
+      const closeStream = () => {
+        if (settled) return;
+        settled = true;
+        clearInterval(heartbeat);
+        unsubscribe?.();
+        try { res.end(); } catch { void 0; }
+      };
+      timer = setTimeout(closeStream, timeoutMs);
+      req.on('close', () => { clearInterval(heartbeat); cleanup(); });
+      req.on('error', () => { clearInterval(heartbeat); cleanup(); });
+    });
+
     // Dynamic endpoint dispatcher — every registered endpoint flows through here.
     // We attach a single express middleware that does the dispatch so we don't have
     // to re-bind express routes when endpoints are added/removed at runtime.

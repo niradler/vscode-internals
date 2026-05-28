@@ -7,8 +7,12 @@
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "--disable-extensions"
+        "--disable-extensions",
+        "${workspaceFolder}"
       ],
+      "env": {
+        "VSCODE_INTERNALS_PORT": "7892"
+      },
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
       "preLaunchTask": "npm: compile"
     },
@@ -16,7 +20,13 @@
       "name": "Run Extension (with other extensions)",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}"
+      ],
+      "env": {
+        "VSCODE_INTERNALS_PORT": "7892"
+      },
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
       "preLaunchTask": "npm: compile"
     }

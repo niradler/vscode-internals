@@ -395,7 +395,76 @@ Watch out for:
 - Model availability drifts. Copilot rotates families; subscribe to `onDidChangeChatModels` if you're a long-running process.
 - The `LanguageModelError` surfaces on `event: error` for streaming and as a non-2xx response (with `{message, code, name}`) for `sendRequest`. The error name (`Blocked`, `NoPermissions`, `NotFound`) is the actionable bit — log it.
 
-## Recipe 13: Self-test the extension after install
+## Recipe 13: Discover launch configs and run the one the user picks
+
+The user says "debug the server" — but you don't know which launch config in `launch.json` is "the server". Read the config, route through `showQuickPick`, then start.
+
+```bash
+# 1. Read every config + compound from launch.json (workspace + per-folder).
+LAUNCH=$(curl -sS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/workspace/configuration?section=launch")
+
+# 2. Build labels: "<name> · <type>" for each configuration, plus compounds.
+LABELS=$(echo "$LAUNCH" | jq -c '
+  (.value.configurations // []) + (.value.compounds // [])
+  | [ .[] | "\(.name) · \(.type // "compound")" ]
+')
+
+# 3. Let the user pick.
+PICK=$(curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"items\":$LABELS,\"placeHolder\":\"Pick a launch config\"}" \
+  $BASE/window/showQuickPick | jq -r .selected)
+
+[ "$PICK" = "null" ] && { echo "user cancelled"; exit 0; }
+NAME="${PICK% · *}"
+
+# 4. Start it. `nameOrConfig` matches launch.json by name.
+curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"nameOrConfig\":\"$NAME\"}" $BASE/debug/start
+```
+
+If the user wants something off-script, swap step 1-3 for `/window/showInputBox` and pass an **inline** DebugConfiguration object as `nameOrConfig` — e.g. `{"type":"node","request":"launch","name":"ad-hoc","program":"<path>"}`. VSCode honors `preLaunchTask` regardless of which path you took.
+
+To follow the session lifecycle from the same script, subscribe to `onDidStartDebugSession` + `onDidTerminateDebugSession` over SSE before calling `/debug/start`, then await the start event before driving the session via `/debug/customRequest`.
+
+## Recipe 14: Interactive agent confirmation flow
+
+The agent has computed an action (apply N edits, run a script, regenerate a token) and needs the user to OK it before doing anything destructive. The pattern: notify with explicit buttons, branch on the response, fall back to a status-bar trace if declined.
+
+```bash
+ACTION_SUMMARY="Apply 12 edits across 4 files?"
+
+PICK=$(curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"message\":\"$ACTION_SUMMARY\",\"items\":[\"Apply\",\"Preview\",\"Cancel\"],\"modal\":true}" \
+  $BASE/window/showInformationMessage | jq -r .selected)
+
+case "$PICK" in
+  "Apply")
+    curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -d "{\"edits\":$EDITS}" $BASE/workspace/applyEdit
+    curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -d '{"text":"$(check) Applied","hideAfterMs":4000}' $BASE/window/setStatusBarMessage
+    ;;
+  "Preview")
+    # Diff against an in-memory copy: open both via showTextDocument and use the diff command.
+    curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -d '{"command":"vscode.diff","args":["file:///before","file:///after","Proposed change"]}' \
+      $BASE/commands/execute
+    ;;
+  "Cancel"|"null")
+    curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -d '{"name":"Agent","text":"User cancelled apply"}' $BASE/window/outputChannel/append
+    ;;
+esac
+```
+
+Notes:
+
+- `"modal":true` blocks the user until they answer — use it when the action is destructive. Drop it for unobtrusive prompts.
+- Dismissal (Esc / X) returns `{ selected: null }`. Treat `null` as "no", never as "yes".
+- For multi-step flows, chain: `showQuickPick` (which option) → `showInputBox` (any free-text param) → `showInformationMessage` (final confirm). Each step can be cancelled; carry the cancel through.
+
+## Recipe 15: Self-test the extension after install
 
 Goal: a third-party script that wants to depend on `niradler.vscode-internals` should verify on startup that the extension is up, the bearer token is valid, the namespaces it cares about are present, and SSE works — then bail out with a clear message if anything's off. This mirrors what `scripts/e2e.mjs` does in this repo; lift it as a template.
 

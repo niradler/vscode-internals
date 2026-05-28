@@ -208,6 +208,15 @@ export function registerStandardEvents(bus: EventBus, serializer: Serializer): v
     })),
   );
 
+  bus.registerEventSource('onDidReceiveDebugSessionCustomEvent', (emit) =>
+    vscode.debug.onDidReceiveDebugSessionCustomEvent((e) => emit({
+      sessionId: e.session.id,
+      sessionType: e.session.type,
+      event: e.event,
+      body: e.body,
+    })),
+  );
+
   bus.registerEventSource('onDidOpenTerminal', (emit) =>
     vscode.window.onDidOpenTerminal((t) => emit({ name: t.name, processId: undefined })),
   );

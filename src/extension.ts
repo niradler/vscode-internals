@@ -128,9 +128,11 @@ interface RuntimeConfig {
 
 function readConfig(): RuntimeConfig {
   const c = vscode.workspace.getConfiguration('vscodeInternals');
+  const envPort = parseInt(process.env.VSCODE_INTERNALS_PORT ?? '', 10);
+  const envHost = process.env.VSCODE_INTERNALS_HOST;
   return {
-    port: c.get<number>('port', 7891),
-    host: c.get<string>('host', '127.0.0.1'),
+    port: Number.isFinite(envPort) ? envPort : c.get<number>('port', 7891),
+    host: envHost && envHost.length > 0 ? envHost : c.get<string>('host', '127.0.0.1'),
     autoStart: c.get<boolean>('autoStart', true),
     maxBodySizeBytes: c.get<number>('maxBodySizeBytes', 10 * 1024 * 1024),
     logLevel: c.get<LogLevel>('logLevel', 'info'),

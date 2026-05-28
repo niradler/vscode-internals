@@ -73,6 +73,15 @@ Open the API docs:
 | `vscodeInternals.maxBodySizeBytes` | `10485760` | 10 MiB. Increase to send large file contents. |
 | `vscodeInternals.logLevel` | `info` | `error` / `warn` / `info` / `debug`. See the **VSCode Internals** output channel. |
 
+### Environment variables
+
+For dev hosts, CI, or any case where settings.json is awkward to set, the bind address can be overridden via environment variables. They take precedence over `vscodeInternals.port` / `vscodeInternals.host`:
+
+| Var | Effect |
+|---|---|
+| `VSCODE_INTERNALS_PORT` | Override `port`. Used by `.vscode/launch.json` to put the dev host on `7892` so it coexists with a marketplace install on `7891`. |
+| `VSCODE_INTERNALS_HOST` | Override `host`. Same loopback warning applies. |
+
 ## Security model
 
 - The token is a 32-byte random value, hex-encoded, prefixed `vscint_`. Stored in `context.secrets`.

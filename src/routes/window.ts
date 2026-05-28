@@ -1,7 +1,26 @@
 import * as vscode from 'vscode';
 import type { EndpointRegistry } from '../registry';
+import type { Serializer } from '../serializer';
 
 const outputChannels = new Map<string, vscode.OutputChannel>();
+
+function toSnippetLocation(
+  input: unknown,
+  serializer: Serializer,
+): vscode.Position | vscode.Range | vscode.Position[] | vscode.Range[] {
+  if (Array.isArray(input)) {
+    if (input.length === 0) throw new TypeError('location: empty array');
+    const first = input[0] as { start?: unknown };
+    if (first && typeof first === 'object' && 'start' in first) {
+      return input.map((i) => serializer.toRange(i));
+    }
+    return input.map((i) => serializer.toPosition(i));
+  }
+  if (input && typeof input === 'object' && 'start' in (input as { start?: unknown })) {
+    return serializer.toRange(input);
+  }
+  return serializer.toPosition(input);
+}
 
 export function registerWindowRoutes(registry: EndpointRegistry, owner: string): void {
   const reg = (def: Parameters<EndpointRegistry['register']>[0]) =>
@@ -119,6 +138,90 @@ export function registerWindowRoutes(registry: EndpointRegistry, owner: string):
       const type = p.revealType ? vscode.TextEditorRevealType[p.revealType] : vscode.TextEditorRevealType.Default;
       editor.revealRange(ctx.serializer.toRange(p.range), type);
       return { ok: true };
+    },
+  });
+
+  reg({
+    method: 'POST',
+    path: '/window/insertSnippet',
+    summary: 'Insert a SnippetString into an editor with tab stops, placeholders, and choices',
+    description:
+      'Wraps TextEditor.insertSnippet — the only way to insert text with $1/$2 tab stops, ' +
+      '${1:default} placeholders, ${1|a,b,c|} choice lists, and the $0 final stop. Use this ' +
+      'when an agent wants to scaffold code but leave specific values for the user to fill in ' +
+      '(parameter names, error messages, assertion bodies, ambiguous picks). For inserts with ' +
+      'no tab stops, use /workspace/applyEdit instead.\n\n' +
+      'Targets the active editor by default; pass uri to target a specific visible editor instead. ' +
+      'Without location, the snippet replaces current selection(s). location accepts a Position ' +
+      '({line,character}), a Range ({start,end}), or an array of either for multi-cursor insertion.\n\n' +
+      'Persistent named snippets (Pattern B — define once, reuse via IntelliSense):\n' +
+      '  1. Define: write a JSON file via /workspace/fs/writeFile to one of:\n' +
+      '       <workspace>/.vscode/<anything>.code-snippets   (workspace-scoped; supports any languages via "scope")\n' +
+      '       <user-snippets-dir>/<langId>.json              (user-global, per language)\n' +
+      '       <user-snippets-dir>/<anything>.code-snippets   (user-global, multi-language via "scope")\n' +
+      '     Schema example:\n' +
+      '       {\n' +
+      '         "log error": {\n' +
+      '           "scope": "javascript,typescript",\n' +
+      '           "prefix": "logerr",\n' +
+      '           "body": ["console.error(\\"${1:msg}\\", ${2:err});", "$0"],\n' +
+      '           "description": "Log an error"\n' +
+      '         }\n' +
+      '       }\n' +
+      '  2. Trigger: either user types the prefix + Tab, or call /commands/execute with command\n' +
+      '     "editor.action.insertSnippet" and args { name: "log error" } (workspace snippet name) or\n' +
+      '     { langId: "typescript", name: "log error" }. You can also pass { snippet: "..." } to that\n' +
+      '     command for an ad-hoc insert without an editor reference — equivalent to this endpoint.',
+    params: {
+      type: 'object',
+      properties: {
+        snippet: {
+          type: 'string',
+          description: 'Snippet body. Example: "function ${1:name}(${2:arg}) {\\n\\t$0\\n}"',
+        },
+        uri: {
+          type: 'string',
+          description: 'Optional target editor URI. Must be currently visible. Defaults to active editor.',
+        },
+        location: {
+          description:
+            'Optional. Position {line,character}, Range {start,end}, or array of either. ' +
+            'Defaults to the editor\'s current selection(s).',
+        },
+        undoStopBefore: { type: 'boolean', description: 'Default true' },
+        undoStopAfter: { type: 'boolean', description: 'Default true' },
+      },
+      required: ['snippet'],
+    },
+    handler: async (raw, ctx) => {
+      const p = raw as {
+        snippet: string;
+        uri?: string;
+        location?: unknown;
+        undoStopBefore?: boolean;
+        undoStopAfter?: boolean;
+      };
+
+      const editor = p.uri
+        ? vscode.window.visibleTextEditors.find(
+            (e) => e.document.uri.toString() === ctx.serializer.toUri(p.uri!).toString(),
+          )
+        : vscode.window.activeTextEditor;
+      if (!editor) {
+        throw new Error(
+          p.uri
+            ? `No visible editor for uri: ${p.uri}. Open it first via /window/showTextDocument.`
+            : 'No active editor',
+        );
+      }
+
+      const location = p.location !== undefined ? toSnippetLocation(p.location, ctx.serializer) : undefined;
+      const options = (p.undoStopBefore !== undefined || p.undoStopAfter !== undefined)
+        ? { undoStopBefore: p.undoStopBefore ?? true, undoStopAfter: p.undoStopAfter ?? true }
+        : undefined;
+
+      const ok = await editor.insertSnippet(new vscode.SnippetString(p.snippet), location, options);
+      return { ok };
     },
   });
 
