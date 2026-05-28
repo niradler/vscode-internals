@@ -109,12 +109,16 @@ Tasks:
 - Release docs: `PUBLISHING.md` with the exact `vsce` PAT-and-publish flow; `CHANGELOG.md` for v0.1.0; `LICENSE` (MIT); marketplace icon at `icon.png` (256x256).
 - E2E suite at `scripts/e2e.mjs` (29 checks) + `scripts/launch-host.ps1` (boots Extension Development Host and runs the suite end-to-end). Last green run: 29/29 in ~1.6s after the dev-host reload.
 
-## Next steps for Nir
+## Shipped 2026-05-28
 
-1. Source the PAT and run `npx @vscode/vsce publish` (see `PUBLISHING.md`).
-2. After successful publish: `git tag v0.1.0 && git push origin v0.1.0`.
-3. Verify the listing at <https://marketplace.visualstudio.com/items?itemName=niradler.vscode-internals>.
-4. Optional follow-ups noted by reviewers:
-   - README "Example calls" `code --no-sandbox --remote-cli` snippet is misleading — replace with a `Copy Token` instruction.
-   - Consider bundling the extension with esbuild to drop the 5 MB+ `node_modules` payload (vsce warning).
-   - Run `vsce ls --tree` if you suspect extra files are landing in the package.
+- **Marketplace listing LIVE**: <https://marketplace.visualstudio.com/items?itemName=niradler.vscode-internals> — v0.1.0.
+- **Publisher hub**: <https://marketplace.visualstudio.com/manage/publishers/niradler/extensions/vscode-internals/hub>.
+- **Git tag**: `v0.1.0` pushed to <https://github.com/niradler/vscode-internals>.
+- **Verified live** via gallery API: released 2026-05-28 13:11:06, last updated same.
+
+## Optional follow-ups
+
+- README "Example calls" `code --no-sandbox --remote-cli` snippet is misleading — replace with a `Copy Token` instruction.
+- Consider bundling the extension with esbuild to drop the ~5 MB `node_modules` payload (vsce warning).
+- Add a screenshot of Swagger UI to the marketplace listing (re-publish with `images/swagger.png` referenced in README).
+- Wire `BACKLOG.md` tier-1 items into a v0.2 milestone — diagnostics-push, file watcher, more SSE events, tunnels proposed API.
