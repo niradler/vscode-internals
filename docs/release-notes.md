@@ -1,6 +1,6 @@
 # Release Notes
 
-Post-release notes that aren't tracked in `CHANGELOG.md`: surprises encountered during a release, and follow-ups that didn't make the cut.
+Post-release notes: surprises encountered during a release, and follow-ups that didn't make the cut. The per-version commit list is generated on demand from git tags (see [publishing.md](publishing.md#generate-the-release-notes)) and is not duplicated here.
 
 ## v0.1.0 — 2026-05-28
 

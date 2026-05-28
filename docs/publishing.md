@@ -16,55 +16,62 @@ End-to-end steps to publish `niradler.vscode-internals` from this checkout.
      - **Scopes** → **Custom defined** → check **Marketplace > Manage**.
    - **Copy the token** immediately. Azure DevOps shows it only once.
 
-3. **Store the PAT locally**. This repo's `.env` is gitignored — put it there:
+3. **Store the PAT.** Two options:
+   - **Recommended** — `npx @vscode/vsce login niradler` once, paste the PAT. vsce stores it in the OS credential manager (verifiable via `npx @vscode/vsce ls-publishers`). No `.env` required afterwards.
+   - **Per-shell fallback** — put `VSCE_PAT=<token>` in `.env` (gitignored) and load it before publishing:
 
-   ```env
-   VSCE_PAT=<paste-token-here>
-   ```
+     ```powershell
+     $env:VSCE_PAT = (Get-Content .env | Select-String '^VSCE_PAT=').ToString().Split('=',2)[1].Trim()
+     ```
 
-## Publish (per release)
+## Release flow (per version)
 
 From the repo root in PowerShell:
 
 ```powershell
-# Load PAT into the current shell from .env
-$env:VSCE_PAT = (Get-Content .env | Select-String '^VSCE_PAT=').ToString().Split('=',2)[1].Trim()
+# 1. Pre-flight: confirm the credential is wired up.
+npx @vscode/vsce ls-publishers   # should print: niradler
 
-# Verify
-[bool]$env:VSCE_PAT   # → True
-
-# Compile + bundle pre-flight (vsce will also do this via vscode:prepublish)
+# 2. Compile.
 npm run compile
 
-# Package — produces vscode-internals-<version>.vsix in the repo root.
-npx @vscode/vsce package
+# 3. Sanity-check the package contents. Stop if you see .env, .claude/**,
+#    .dev-token, or anything sensitive — fix .vscodeignore first.
+npx @vscode/vsce ls --tree
 
-# Publish — uploads the current package.json version. vsce reads $env:VSCE_PAT automatically.
-npx @vscode/vsce publish
+# 4. Publish. vsce bumps package.json, creates a git commit + tag, and uploads.
+npx @vscode/vsce publish patch   # 0.1.0 -> 0.1.1
+# or: publish minor / major / <explicit-version> / --pre-release
+
+# 5. Push the bump commit and tag.
+git push
+git push --tags
 ```
 
 After a successful publish:
 
 - Listing appears at https://marketplace.visualstudio.com/items?itemName=niradler.vscode-internals (allow ~1 minute for the gallery to refresh).
-- Tag and push the release:
 
-  ```powershell
-  git tag v0.1.0
-  git push origin v0.1.0
-  ```
+## Generate the release notes
 
-## Bumping versions
-
-`vsce publish` accepts a SemVer keyword and bumps `package.json` for you:
+There is no maintained `CHANGELOG.md`. Release notes are generated on demand from git history:
 
 ```powershell
-npx @vscode/vsce publish patch   # 0.1.0 -> 0.1.1
-npx @vscode/vsce publish minor   # 0.1.0 -> 0.2.0
-npx @vscode/vsce publish major   # 0.1.0 -> 1.0.0
-npx @vscode/vsce publish 0.1.3   # explicit
+# Commits since the last tag (run BEFORE bumping, or pass an explicit range).
+node scripts/changelog.mjs
+
+# Explicit range:
+node scripts/changelog.mjs v0.1.0..v0.1.1
 ```
 
-It also creates a git commit/tag via `npm version` when run inside a git repo.
+Pipe the output into a GitHub Release (requires `gh` CLI):
+
+```powershell
+$notes = node scripts/changelog.mjs v0.1.0..v0.1.1
+gh release create v0.1.1 --title "v0.1.1" --notes "$notes"
+```
+
+Anything surprising during the release (issues hit, follow-ups deferred) goes into [release-notes.md](release-notes.md) under a version heading — that file is for context the commit log can't capture, not for re-listing commits.
 
 ## Sanity checks before publish
 
@@ -74,10 +81,12 @@ Always run before publishing:
 # What will go into the package
 npx @vscode/vsce ls --tree
 
-# Verify .env is NOT in the package output (vsce already errors out, but double-check)
+# Confirm nothing sensitive is included.
+# Expected EXCLUDED: .env, .env.*, .claude/**, .vscode/**, .github/**, src/**,
+# scripts/**, skills/**, docs/**, CHANGELOG.md, .dev-token, *.map, **/*.ts.
 ```
 
-If you see anything sensitive (`*.env`, `.dev-token`, credentials, etc.), stop and add it to `.vscodeignore`.
+If something sensitive appears, stop and add it to `.vscodeignore`.
 
 ## Manual upload fallback
 
