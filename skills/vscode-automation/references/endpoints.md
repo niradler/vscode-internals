@@ -2,21 +2,25 @@
 
 All paths are relative to `http://127.0.0.1:7891`. Every non-public endpoint requires `Authorization: Bearer <token>`. POST bodies are JSON. This catalog is the baseline shipped with `niradler.vscode-internals` — the live truth is `GET /openapi.json`, which can grow at runtime as other extensions register endpoints.
 
+Note on the spec: `/openapi.json` enumerates only registry-tracked routes. The four public paths below (`/health`, `/openapi.json`, `/docs`, `/docs/assets/*`) and the `/events/*` SSE endpoints are wired directly into the HTTP server and do **not** appear under `spec.paths`. Don't assert on their presence in the spec.
+
 ## Public (no auth)
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/health` | Liveness check. |
-| GET | `/openapi.json` | Live OpenAPI 3.1 spec built from the registry. |
+| GET | `/health` | Liveness check. Returns `{ ok, version, ... }`. |
+| GET | `/openapi.json` | Live OpenAPI 3.1 spec built from the registry. Excludes public paths and `/events/*`. |
 | GET | `/docs` | Swagger UI (bundled, offline). |
 | GET | `/docs/assets/*` | Swagger UI static assets. |
 
 ## events
 
+Not in `/openapi.json`. Token still required for the SSE stream itself.
+
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/events/available` | List all subscribable event names. |
-| GET | `/events?subscribe=a,b,c` | SSE stream. 25-second heartbeat. |
+| GET | `/events/available` | List all subscribable event names. Returns `{ events: [...] }`. |
+| GET | `/events?subscribe=a,b,c` | SSE stream. First frame is `event: ready`. 25-second heartbeat as `: comment` lines. 400 if `subscribe` is missing. |
 
 The current source set spans editor (`onDidChangeActiveTextEditor`, `onDidChangeTextEditorSelection`, `onDidChangeTextEditorVisibleRanges`, `onDidChangeVisibleTextEditors`, `onDidOpenTextDocument`, `onDidCloseTextDocument`, `onDidSaveTextDocument`, `onDidChangeTextDocument`), tabs/window (`onDidChangeTabs`, `onDidChangeTabGroups`, `onDidChangeActiveTerminal`, `onDidChangeActiveColorTheme`, `onDidChangeWindowState`), files (`onDidCreateFiles`, `onDidDeleteFiles`, `onDidRenameFiles`, `onDidChangeWorkspaceFolders`), languages (`onDidChangeDiagnostics`), debug (`onDidStartDebugSession`, `onDidTerminateDebugSession`, `onDidChangeActiveDebugSession`, `onDidChangeBreakpoints`), notebooks (`onDidOpenNotebookDocument`, `onDidCloseNotebookDocument`, `onDidChangeNotebookDocument`), tasks/terminals (`onDidStartTask`, `onDidEndTask`, `onDidEndTaskProcess`, `onDidOpenTerminal`, `onDidCloseTerminal`), config (`onDidChangeConfiguration`), extensions/LM (`onDidChangeExtensions`, `onDidChangeChatModels`). Always hit `/events/available` for the authoritative list.
 
@@ -85,8 +89,8 @@ The current source set spans editor (`onDidChangeActiveTextEditor`, `onDidChange
 
 | Method | Path | Summary |
 |---|---|---|
-| GET  | `/tabs/groups` | All tab groups + their tabs + which group is active. |
-| GET  | `/tabs/list` | Flat list of every tab across groups, with `groupViewColumn`. |
+| GET  | `/tabs/groups` | All tab groups + their tabs + which group is active. Returns `{ activeGroupViewColumn, groups: [...] }`. |
+| GET  | `/tabs/list` | Flat list of every tab across groups, with `groupViewColumn`. Returns a bare array. |
 | GET  | `/tabs/active` | Active tab in the active group. |
 | POST | `/tabs/close` | Close tab(s) by `uri`, `label`, or `viewColumn+index`. Optional `preserveFocus`, `force`. |
 | POST | `/tabs/closeGroup` | Close a whole group. Params: `viewColumn`, `preserveFocus`. |
@@ -99,7 +103,7 @@ All position-based endpoints take 0-indexed `{line, character}`. Results are LSP
 
 | Method | Path | Summary |
 |---|---|---|
-| GET  | `/languages/all` | All registered language IDs. |
+| GET  | `/languages/all` | All registered language IDs. Returns `{ languages: [...] }`. |
 | POST | `/languages/setTextDocumentLanguage` | Change a document's language ID. Params: `uri`, `languageId`. |
 | POST | `/languages/match` | Score a DocumentSelector against a document. Params: `uri`, `selector` (string, filter, or array). |
 | POST | `/languages/diagnostics` | Per-file or full workspace diagnostics. |
@@ -120,7 +124,7 @@ All position-based endpoints take 0-indexed `{line, character}`. Results are LSP
 
 | Method | Path | Summary |
 |---|---|---|
-| GET  | `/commands/list` | Params: `filterInternal` (default true), `filter` (substring). |
+| GET  | `/commands/list` | Params: `filterInternal` (default true), `filter` (substring). Returns `{ count, commands: [...] }`. |
 | POST | `/commands/execute` | Params: `command`, `args` (positional array). The universal escape hatch. |
 
 ## debug
@@ -202,8 +206,8 @@ Wraps `vscode.lm` (public since VSCode 1.90). First call from this extension tri
 
 | Method | Path | Summary |
 |---|---|---|
-| GET  | `/lm/models` | All chat models VSCode currently sees. Each: `{id, vendor, family, version, name, maxInputTokens}`. |
-| POST | `/lm/selectChatModels` | Filter models by `{vendor, family, version, id}`. |
+| GET  | `/lm/models` | All chat models VSCode currently sees. Returns `{ models: [{id, vendor, family, version, name, maxInputTokens}] }`. |
+| POST | `/lm/selectChatModels` | Filter models by `{vendor, family, version, id}`. Returns `{ models: [...] }`. |
 | POST | `/lm/sendRequest` | Non-streaming. Params: `selector?`, `messages:[{role,content}]`, `modelOptions?`, `justification?`. Returns `{model, text}`. |
 | POST | `/lm/sendRequestStream` | Streams as SSE. Events: `model`, `chunk` (`{text}`), `done` (`{totalText,totalChars}`), `error` (`{message,code,name}`). Connection stays open until completion or client disconnect (`AbortController` cancels the model request). |
 | POST | `/lm/countTokens` | Per-model tokenizer. Params: `selector?`, `text`. Returns `{model, tokens}`. |
@@ -245,3 +249,14 @@ Workflow: hit `GET /extensions/apis?activate=true`, read the `keys`/`shape` for 
 ## Discoverability
 
 Other extensions can register their own routes through the public `registerEndpoint` API. **If you expected an endpoint and got 404, re-fetch `/openapi.json`** — the registry is dynamic.
+
+## Commands available to `/commands/execute`
+
+The extension itself contributes a handful of palette commands:
+
+- `vscodeInternals.showToken` — prompt with truncated token + "Copy"/"Reveal" actions.
+- `vscodeInternals.copyToken` — copy the bearer token to the clipboard.
+- `vscodeInternals.regenerateToken` — invalidate the current token and mint a new one (copied to clipboard).
+- `vscodeInternals.openDocs` — open `/docs` in the external browser.
+- `vscodeInternals.showStatus` — info popup with server URL, endpoint count, and event-source count.
+- `vscodeInternals.restart` — **dev-only**. Registered only when `context.extensionMode === Development`; in marketplace builds this command does not exist. End users reload the window instead.

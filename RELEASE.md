@@ -95,4 +95,26 @@ Tasks:
 
 ## Issues / surprises
 
-_(updated as we hit them)_
+- **Restart-via-API deadlock (fixed)** — `vscodeInternals.restart` invoked via `POST /commands/execute` hung because the command body `await`-ed `server.stop()` on the same socket that was serving the request. Fixed by scheduling the restart on `setImmediate` and returning `{restarting: true}` synchronously so the calling HTTP response can complete.
+- **Restart dev-only (Nir's call)** — the restart command is now only registered when `context.extensionMode === Development`. End users who change `port` / `host` / `maxBodySizeBytes` see a "Reload Window" prompt instead. Cleaner UX, smaller production surface.
+- **.env almost shipped (caught by vsce)** — first `vsce package` attempt blocked on `.env` being included. Added `.env`, `.env.*`, `.github/**`, and node_modules trimming patterns to `.vscodeignore`. Always inspect `vsce ls --tree` before publishing.
+- **Test-shape mismatches** — first E2E run was 24/29: assertions had wrong response shapes for `/tabs/groups`, `/languages/all`, `/lm/models`, `/authentication/accounts` (missing `?providerId=github`), and one openapi check assumed `/health` was in the spec when it isn't (only registry-tracked routes are). All test-side; no extension behavior was wrong.
+
+## What shipped
+
+- v0.1.0 source on GitHub: <https://github.com/niradler/vscode-internals> (initial commit `0bb9bdc`, branch `main`).
+- CI: `.github/workflows/ci.yml` running `npm ci && npm run compile && npm run lint` on ubuntu-latest + windows-latest, Node 20.
+- `vscode-internals-0.1.0.vsix` built in the repo root (1.7 MB, 437 files, deps included, sensitive files excluded).
+- Skill `skills/vscode-automation/` updated: three new recipes (diagnostics-loop, lm, self-test) + refreshed endpoint catalog reflecting the live OpenAPI spec.
+- Release docs: `PUBLISHING.md` with the exact `vsce` PAT-and-publish flow; `CHANGELOG.md` for v0.1.0; `LICENSE` (MIT); marketplace icon at `icon.png` (256x256).
+- E2E suite at `scripts/e2e.mjs` (29 checks) + `scripts/launch-host.ps1` (boots Extension Development Host and runs the suite end-to-end). Last green run: 29/29 in ~1.6s after the dev-host reload.
+
+## Next steps for Nir
+
+1. Source the PAT and run `npx @vscode/vsce publish` (see `PUBLISHING.md`).
+2. After successful publish: `git tag v0.1.0 && git push origin v0.1.0`.
+3. Verify the listing at <https://marketplace.visualstudio.com/items?itemName=niradler.vscode-internals>.
+4. Optional follow-ups noted by reviewers:
+   - README "Example calls" `code --no-sandbox --remote-cli` snippet is misleading — replace with a `Copy Token` instruction.
+   - Consider bundling the extension with esbuild to drop the 5 MB+ `node_modules` payload (vsce warning).
+   - Run `vsce ls --tree` if you suspect extra files are landing in the package.
