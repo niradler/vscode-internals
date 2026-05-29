@@ -64,11 +64,13 @@ node scripts/changelog.mjs
 node scripts/changelog.mjs v0.1.0..v0.1.1
 ```
 
-Pipe the output into a GitHub Release (requires `gh` CLI):
+Pipe the output into a GitHub Release (requires `gh` CLI). Use `--notes-file`, not `--notes`: when bullet lines start with `-`, gh parses them as shorthand flags and the create call fails.
 
 ```powershell
-$notes = node scripts/changelog.mjs v0.1.0..v0.1.1
-gh release create v0.1.1 --title "v0.1.1" --notes "$notes"
+$notesFile = Join-Path $env:TEMP "release-notes-v0.1.1.txt"
+node scripts/changelog.mjs v0.1.0..v0.1.1 | Out-File -FilePath $notesFile -Encoding utf8
+gh release create v0.1.1 --title "v0.1.1" --notes-file $notesFile
+Remove-Item $notesFile -Force
 ```
 
 Anything surprising during the release (issues hit, follow-ups deferred) goes into [release-notes.md](release-notes.md) under a version heading — that file is for context the commit log can't capture, not for re-listing commits.

@@ -129,6 +129,16 @@ async function main() {
   const health = await waitForHealth(url, STARTUP_TIMEOUT_MS);
   console.log(`e2e: health ok, version=${health.version}`);
 
+  const pkgVersion = JSON.parse(
+    fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8'),
+  ).version;
+  if (health.version !== pkgVersion) {
+    throw new Error(
+      `/health version=${health.version} but package.json version=${pkgVersion} — ` +
+        `EXTENSION_VERSION drift (see release-notes.md v0.1.2).`,
+    );
+  }
+
   const t = new TestRun(url, token);
 
   // --- Public / auth gate ---

@@ -10,7 +10,10 @@ import { Serializer } from './serializer';
 import { InternalsServer } from './server';
 import { registerAllBuiltinRoutes, registerDevRoutes } from './routes';
 
-const EXTENSION_VERSION = '0.1.0';
+const EXTENSION_VERSION: string = (() => {
+  const pkgPath = path.join(__dirname, '..', 'package.json');
+  return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
+})();
 const OUTPUT_CHANNEL_NAME = 'VSCode Internals';
 const CORE_OWNER_ID = 'core';
 
