@@ -2,6 +2,7 @@ import type { EndpointRegistry } from '../registry';
 import { registerAuthenticationRoutes } from './authentication';
 import { registerCommandsRoutes } from './commands';
 import { registerDebugRoutes } from './debug';
+import { registerDevRoutes, type DevDeps } from './dev';
 import { registerEnvRoutes } from './env';
 import { registerExtensionsRoutes } from './extensions';
 import { registerLanguagesRoutes } from './languages';
@@ -14,6 +15,8 @@ import { registerTasksRoutes } from './tasks';
 import { registerTestsRoutes } from './tests';
 import { registerWindowRoutes } from './window';
 import { registerWorkspaceRoutes } from './workspace';
+
+export { registerDevRoutes, type DevDeps };
 
 export function registerAllBuiltinRoutes(registry: EndpointRegistry, ownerId: string): void {
   registerWorkspaceRoutes(registry, ownerId);
