@@ -127,13 +127,45 @@ The agents view itself = the `glass` webview. No introspection API for messages 
 
 ## Extension additions in this PR
 
-Four `/cursor/*` routes — each does something `/commands/execute` alone can't. Pure passthroughs (e.g. `glass.newAgent`, `glass.newAgentWithQuery`, `composer.getOrderedSelectedComposerIds`, `glass.openAgentById`) are reachable via `/commands/execute` and don't earn dedicated routes.
+Two changes — one new route, one additive field. Everything else is a recipe via existing endpoints; no duplication, no harm to VSCode (additive field + safe-on-vscode route).
 
-- **`GET /env/info`** — augmented with `cursorVersion` (Cursor's build version, distinct from VSCode base `version`). Caller computes `isCursor = appName === "Cursor"` themselves.
-- **`GET /cursor/mcp/configured?revealSecrets=false`** — reads `~/.cursor/mcp.json` + `<ws>/.cursor/mcp.json` from disk, redacts bearer tokens / `Authorization` / `apiKey` / `token` / `secret` fields by default. Heuristic also catches `Bearer …` / `gho_…` / `sk-…` / `xoxb-…` token strings even under non-secret keys.
-- **`GET /cursor/mcp/active`** — scrapes `workbench.action.output.show.anysphere.cursor-mcp.MCP <id>.workspaceId-…` command names to list active server IDs. Workaround for missing public API; swap to a real one if Cursor publishes it.
-- **`POST /cursor/chatEditing/accept {path?}`** — `path` present → `chatEditing.acceptFile` with `vscode.Uri.file(path)`; absent → `chatEditing.acceptAllFiles`. The Uri wrap is the load-bearing part — `/commands/execute` passes JSON args verbatim, so calling `acceptFile` with a string path wouldn't work.
-- **`POST /cursor/chatEditing/discard {path?}`** — same branching for `discardFile` / `discardAllFiles`.
+- **`POST /cursor/chatEditing {action: "accept"|"discard", path?: string}`** — the *only* dedicated Cursor route. With no `path` → `chatEditing.acceptAllFiles` / `discardAllFiles`. With `path` → `chatEditing.acceptFile` / `discardFile` after wrapping `string → vscode.Uri.file(path)`. The Uri wrap is the load-bearing part: `/commands/execute` passes JSON args verbatim, and there's no way to construct a `vscode.Uri` over JSON. Returns `{supported:false}` on non-Cursor hosts — no exception, callers on VSCode get a clean signal.
+- **`GET /env/info`** — augmented with `cursorVersion` (Cursor's build version, distinct from VSCode base `version`). Null on stock VSCode. Caller computes `isCursor = appName === "Cursor"` themselves.
+
+## Recipes — using existing endpoints to cover Cursor flows
+
+Each operation that didn't earn a dedicated route, done via what's already on the surface:
+
+```bash
+# Detect host
+APPNAME=$(vsc $BASE/env/info | jq -r .appName)
+IS_CURSOR=$([ "$APPNAME" = "Cursor" ] && echo true || echo false)
+CURSOR_VER=$(vsc $BASE/env/info | jq -r .cursorVersion)
+
+# Read MCP config (configured servers).
+# WARNING: the response contains plaintext bearer tokens / API keys. Don't log it to LLM-visible
+# transcripts. If you're piping to an LLM, redact yourself before passing along.
+USER_MCP=$(vsc -d '{"uri":"file:///c:/Users/'$USERNAME'/.cursor/mcp.json"}' $BASE/workspace/readFile)
+WS_MCP=$(vsc -d '{"uri":"file:///<workspace-root>/.cursor/mcp.json"}' $BASE/workspace/readFile)
+
+# List active MCP servers — scrape output-channel command names
+vsc $BASE/commands/list | jq -r '.commands[]
+  | select(startswith("workbench.action.output.show.anysphere.cursor-mcp.MCP "))
+  | ltrimstr("workbench.action.output.show.anysphere.cursor-mcp.MCP ")
+  | split(".workspaceId-")[0]' | sort -u
+
+# Open a new agent (empty)
+vsc -d '{"command":"glass.newAgent"}' $BASE/commands/execute
+
+# Open a new agent pre-filled with a prompt (user-equivalent path)
+vsc -d '{"command":"glass.newAgentWithQuery","args":["What is 5+5?"]}' $BASE/commands/execute
+
+# Currently-selected agent ids
+vsc -d '{"command":"composer.getOrderedSelectedComposerIds"}' $BASE/commands/execute
+
+# Open an existing agent by id
+vsc -d '{"command":"glass.openAgentById","args":["7ec8ee75-…"]}' $BASE/commands/execute
+```
 
 ### Tier 2 — needs more verification first
 
@@ -152,26 +184,6 @@ Four `/cursor/*` routes — each does something `/commands/execute` alone can't.
 - **Stream agent response** — Cursor surfaces nothing for this through commands. Could maybe register a `chat.createChatParticipant` and route prompts through that, but that's a different model than driving Cursor's UI.
 - **Cursor-published events** — none of `vscode.cursor.onDid*` events are reachable from a non-built-in extension. Without them, `/cursor/agents/list` requires polling.
 - **MCP tool list** — short of talking to each MCP server directly via its declared transport (stdio/http), no API path. Worth investigating later if/when there's a real use case.
-
-## Drive Cursor without dedicated routes
-
-The endpoints that didn't earn their own route — every caller can use `/commands/execute` directly:
-
-```bash
-# Open a new agent
-vsc -d '{"command":"glass.newAgent"}' $BASE/commands/execute
-
-# Open a new agent pre-filled with a prompt (the user-equivalent path)
-vsc -d '{"command":"glass.newAgentWithQuery","args":["What is 5+5?"]}' $BASE/commands/execute
-
-# Which composer ids are currently open?
-vsc -d '{"command":"composer.getOrderedSelectedComposerIds"}' $BASE/commands/execute
-
-# Open an existing agent by id
-vsc -d '{"command":"glass.openAgentById","args":["7ec8ee75-…"]}' $BASE/commands/execute
-```
-
-Branch on `(GET /env/info).appName === "Cursor"` first if you need cross-host safety.
 
 ## Skill updates
 
