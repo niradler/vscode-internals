@@ -104,33 +104,61 @@ Cursor's chat agents (codenamed "glass" internally) are reachable via 80+ `glass
 
 The agents view itself = the `glass` webview. No introspection API for messages without going through the private composer-handle internals.
 
-## What we can drive vs. what we'd need to build
+## Probe log — area by area
 
-| Use case | Status |
+This section is the verified ground truth. Each row is a real probe run via `/dev/eval` against a running Cursor 1.105.1 EDH. Updated as areas are probed.
+
+### Area #1: Agents lifecycle ✅ probed
+
+| Capability | Result | Evidence |
+| --- | --- | --- |
+| List all loaded composers + per-agent state | ✅ works via `composer.getComposerHandleById(seedId).manager.loadedComposers.byId` | Returns object map of UUID → full state record (~70 fields each: text, conversationMap, modelConfig, status, todos, capabilities, diff stats, timestamps) |
+| Get currently-selected agent ids | ✅ `composer.getOrderedSelectedComposerIds` | Returns array of UUIDs |
+| Get one agent's full state | ✅ same path | Use seed id, then index byId[targetId] |
+| Detect "is this agent generating?" | ✅ `state.status` | "none" / "generating" / etc. |
+| Read input box content | ✅ `state.text` / `state.richText` | |
+| Read messages (conversation) | ⚠️ partial — `state.fullConversationHeadersOnly` (headers only) + `state.conversationMap` (full bubbles, webview-bound shape) | Works for empty/light agents; conversationMap can explode when serialized — needs targeted field extraction (`bubbleId`, `type`, `role`, `text`, `createdAt`, `tokenCount`, `modelName`, `finishReason`) |
+| Read current model selection | ✅ `state.modelConfig` | `{modelName, maxMode, selectedModels:[{modelId, parameters}]}` |
+| Read agent's pending todos | ✅ `state.todos` | Cursor agent task list |
+| Read diff stats | ✅ `state.totalLinesAdded/Removed`, `state.addedFiles/removedFiles` | |
+| Read worktree state | ✅ `state.isCreatingWorktree`, `isApplyingWorktree`, `applied` flags | |
+| List glass cloud agents (separate from composers) | ⚠️ no public listing. Cloud-agent state lives in a file-backed store revealed by `glass.agentStore.revealDir`. File-read approach would work but wasn't pursued here. | |
+| Open new agent (empty) | ❌ `glass.newAgent` returns undefined; no observable state change in `byId` map | UI side-effect only — possibly requires UI focus context |
+| Open new agent with prompt | ❌ `glass.newAgentWithQuery("prompt")` same — no state change | |
+| Submit prompt to existing agent | ❌ none of `composer.sendToAgent`, `composer.startComposerPrompt`, `composer.startComposerPrompt2` produce observable effect across 12 arg-shape variants. No `composer.submit` / `composer.send` exists. Manager prototype has no send/submit method. | Direct field write (`c.text = "..."`) propagates in JS but doesn't reach the UI; `vscode.commands.executeCommand("type", {text})` doesn't reach the webview input either. |
+| Switch model | (probed in area #2) | |
+| Archive agent | ✅ `glass.archiveActiveAgent` (no return) | UI side-effect; archives the focused agent |
+| Open agent by id | ✅ `glass.openAgentById(uuid)` (no return) | UI side-effect; opens the agent tab |
+| Cmd-K inline edit | (probed in area #6) | |
+| Tab autocomplete | (out of scope per Nir) | |
+
+**Bottom line for area #1.** The READ side is rich — we get full agent state including model, conversation headers, todos, diff stats, and worktree state. The WRITE side is essentially closed: no public path to programmatically dispatch a prompt to a composer. UI-visible state-change commands (`glass.newAgent`, `glass.archiveActiveAgent`, `glass.openAgentById`) work as side effects but return nothing useful.
+
+### What we'd need to build vs. what's a recipe
+
+| Use case | Status / where |
 | --- | --- |
-| Detect host is Cursor vs VSCode | ✅ `/dev/info` → check `appName === "Cursor"` or `uriScheme === "cursor"` or `cursorVersion` global |
-| Enumerate Cursor command surface | ✅ `/commands/list` filtered by `composer.*`, `glass.*`, `aichat.*`, `mcp.*`, `chatEditing.*`, `cmdK.*` |
-| List configured MCP servers | ✅ read `~/.cursor/mcp.json` + `<ws>/.cursor/mcp.json` from disk |
-| List active MCP servers | ⚠️ scrape output-channel command names; no direct API for non-built-in extensions |
-| MCP tool list per server | ❌ `vscode.cursor.getMcpSnapshotTools()` gated; would need to talk to each MCP server via its own transport directly |
-| Open new agent | ✅ `glass.newAgent` |
-| Open new agent with prompt | ✅ `glass.newAgentWithQuery("prompt")` |
-| Open existing agent by id | ✅ `glass.openAgentById` |
-| List active agents | ✅ `composer.getOrderedSelectedComposerIds` |
-| Send follow-up message to existing agent | ⚠️ `composer.sendToAgent` accepts args but unverified whether it actually dispatches. Needs sentinel-prompt test that also verifies the response side. |
-| Read agent response messages | ❌ `composer.exportChatAsMd` returns undefined; private internals (`composer.getComposerHandleById` → manager) are fragile. No clean API. |
-| Stream agent response | ❌ No public surface. Cursor's streaming is internal. |
-| Accept agent's proposed edits | ✅ `chatEditing.acceptAllFiles` / `chatEditing.acceptFile` |
-| Discard agent's proposed edits | ✅ `chatEditing.discardAllFiles` / `chatEditing.discardFile` |
-| Cmd-K inline edit | ✅ via `aipopup.action.modal.generate` (signature unverified) |
-| Trigger/accept/reject Tab autocomplete | ❌ no programmatic command surface found |
+| Detect host is Cursor vs VSCode | ✅ `/env/info` → `appName === "Cursor"` (or check `cursorVersion` field) |
+| Enumerate Cursor command surface | ✅ `/commands/list` filtered by namespace prefix |
+| List configured MCP servers | ✅ `/workspace/readFile` on `~/.cursor/mcp.json` |
+| List active MCP servers | ✅ recipe in this doc (filter `/commands/list`) |
+| MCP tool list per server | ❌ gated to built-in extensions or talk-to-server directly |
+| List & read all agents | ✅ **`GET /cursor/agents`** (new, this PR) — relies on private internals, may break on Cursor updates |
+| Get one agent's full state | ✅ **`GET /cursor/agents?id=<uuid>&include=conversation,todos,capabilities`** |
+| Open new agent / send prompt | ❌ no public path (verified). Recipe via `/commands/execute glass.newAgent` works as UI side-effect only |
+| Read agent response messages | ⚠️ via `/cursor/agents?id=…&include=conversation` — best-effort field extraction from internal conversation map |
+| Stream agent response | ❌ no public surface |
+| Accept agent's proposed edits | ✅ **`POST /cursor/chatEditing {action:"accept", path?}`** |
+| Discard agent's proposed edits | ✅ **`POST /cursor/chatEditing {action:"discard", path?}`** |
+| Register our own chat participant in Cursor's chat | ✅ `vscode.chat.createChatParticipant` works (inverse direction — Cursor invokes us). Out of scope here; would be its own feature. |
 
 ## Extension additions in this PR
 
-Two changes — one new route, one additive field. Everything else is a recipe via existing endpoints; no duplication, no harm to VSCode (additive field + safe-on-vscode route).
+All `/cursor/*` routes are **only registered when the host is Cursor** — they're invisible in `/openapi.json` on VSCode, not just "supported:false". `/env/info` gains a nullable `cursorVersion` field on every host (null on VSCode).
 
-- **`POST /cursor/chatEditing {action: "accept"|"discard", path?: string}`** — the *only* dedicated Cursor route. With no `path` → `chatEditing.acceptAllFiles` / `discardAllFiles`. With `path` → `chatEditing.acceptFile` / `discardFile` after wrapping `string → vscode.Uri.file(path)`. The Uri wrap is the load-bearing part: `/commands/execute` passes JSON args verbatim, and there's no way to construct a `vscode.Uri` over JSON. Returns `{supported:false}` on non-Cursor hosts — no exception, callers on VSCode get a clean signal.
-- **`GET /env/info`** — augmented with `cursorVersion` (Cursor's build version, distinct from VSCode base `version`). Null on stock VSCode. Caller computes `isCursor = appName === "Cursor"` themselves.
+- **`GET /cursor/agents?id=<uuid>&include=conversation,todos,capabilities,context`** — lists all loaded composer agents with per-agent state summary; `?id=` filters to one; `?include=` adds bulky fields. Reads from Cursor's private extension-host registry (`composer.getComposerHandleById().manager.loadedComposers.byId`). Returns `{error:"shape_changed", detail}` if the internal shape drifts on a future Cursor release.
+- **`POST /cursor/chatEditing {action: "accept"|"discard", path?: string}`** — accept or discard the agent's pending edits. With no `path` → `chatEditing.acceptAllFiles` / `discardAllFiles`. With `path` → `chatEditing.acceptFile` / `discardFile` after wrapping `string → vscode.Uri.file(path)`. The Uri wrap is the load-bearing part: `/commands/execute` passes JSON args verbatim, and there's no way to construct a `vscode.Uri` over JSON.
+- **`GET /env/info.cursorVersion`** — Cursor's build version (distinct from VSCode base `version`). Null on stock VSCode. Caller computes `isCursor = appName === "Cursor"` themselves.
 
 ## Recipes — using existing endpoints to cover Cursor flows
 
