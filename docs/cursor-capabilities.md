@@ -117,7 +117,7 @@ This section is the verified ground truth. Each row is a real probe run via `/de
 | Get one agent's full state | ✅ same path | Use seed id, then index byId[targetId] |
 | Detect "is this agent generating?" | ✅ `state.status` | "none" / "generating" / etc. |
 | Read input box content | ✅ `state.text` / `state.richText` | |
-| Read messages (conversation) | ⚠️ partial — `state.fullConversationHeadersOnly` (headers only) + `state.conversationMap` (full bubbles, webview-bound shape) | Works for empty/light agents; conversationMap can explode when serialized — needs targeted field extraction (`bubbleId`, `type`, `role`, `text`, `createdAt`, `tokenCount`, `modelName`, `finishReason`) |
+| Read messages (conversation) | ✅ clean via targeted field extraction on `state.conversationMap` | Verified on a live "hello" exchange: bubble fields `bubbleId`/`type`/`text`/`richText`/`createdAt`/`tokenCount`/`modelName`/`finishReason`. `type:1` = user, `type:2` = assistant. Turn duration in `conversationHeaders[i].grouping.turnDurationMs`. Raw `conversationMap` would explode (24MB observed) — sanitized field-pick is what works. |
 | Read current model selection | ✅ `state.modelConfig` | `{modelName, maxMode, selectedModels:[{modelId, parameters}]}` |
 | Read agent's pending todos | ✅ `state.todos` | Cursor agent task list |
 | Read diff stats | ✅ `state.totalLinesAdded/Removed`, `state.addedFiles/removedFiles` | |
@@ -132,7 +132,130 @@ This section is the verified ground truth. Each row is a real probe run via `/de
 | Cmd-K inline edit | (probed in area #6) | |
 | Tab autocomplete | (out of scope per Nir) | |
 
-**Bottom line for area #1.** The READ side is rich — we get full agent state including model, conversation headers, todos, diff stats, and worktree state. The WRITE side is essentially closed: no public path to programmatically dispatch a prompt to a composer. UI-visible state-change commands (`glass.newAgent`, `glass.archiveActiveAgent`, `glass.openAgentById`) work as side effects but return nothing useful.
+**Bottom line for area #1.** The READ side is rich — we get full agent state including model, **the actual conversation text in both directions**, todos, diff stats, and worktree state. The WRITE side is essentially closed: no public path to programmatically dispatch a prompt to a composer. UI-visible state-change commands (`glass.newAgent`, `glass.archiveActiveAgent`, `glass.openAgentById`) work as side effects but return nothing useful.
+
+### Area #2: Model selection ⚠️ low-value (stopped early)
+
+| Capability | Result |
+| --- | --- |
+| List available models | ❌ `vscode.lm.selectChatModels()` returns `[]` — Cursor proprietary LM, not VSCode-LM-compatible |
+| Read agent's selected model | ⚠️ `state.modelConfig.modelName` always `"default"` even after a real exchange — placeholder meaning "use whatever Cursor decides". Real model not exposed. |
+| Read which model answered a given message | ❌ Assistant bubbles only carry `tokenCount`, no `modelName` field present |
+| Switch model via command | ❌ `glass.cursorai.action.switchToModelSlug(slug)` tried with 8 real Claude/GPT slugs — `modelConfig.modelName` unchanged. UI-only. |
+
+**Stopped here per Nir's call.** Bottom line: model selection is essentially a black box from outside the built-in API. The `modelConfig` field already surfaces through `/cursor/agents` for callers who care; no dedicated `/cursor/models` endpoint earns its keep because there's nothing real to expose beyond `"default"`. Switching is impossible. If Cursor adds a public API later, revisit.
+
+### Area #3: LLM call from extension ❌ closed by design
+
+| Capability | Result |
+| --- | --- |
+| `vscode.lm.selectChatModels()` (any selector) | Returns `[]`. Cursor doesn't surface its LLM through standard vscode.lm API. |
+| `vscode.lm.computeEmbeddings` | ❌ `embeddings` proposed API gated to built-in extensions. |
+| `vscode.lm.invokeTool` + `vscode.lm.tools` | Function callable, but `tools` array is empty — no MCP/LM tools in the standard registry (Cursor's MCP tools live in the private `vscode.cursor.*` namespace). |
+| `cursorai.action.generateInTerminal` | UI-only — accepts arg shapes, returns null, no observable effect. |
+| `vscode.chat.createChatParticipant("vscint", handler)` | ✅ creation succeeds. **Unverified** whether Cursor's glass UI actually routes `@vscint` to a third-party participant. Would need a persistent registration + manual `@vscint` test in the chat. |
+
+**Stopped here per Nir's call.** Net: no "extension asks Cursor's LLM" path. Deliberate moat — Cursor doesn't want third-party extensions consuming its credits. The only door that's *open* is the inverse direction (Cursor invokes our `chat.createChatParticipant` handler) and it's uncertain in Cursor's UI; revisit if a real use case demands it.
+
+### Area #4: Codebase indexing ❌ mostly closed
+
+| Capability | Result |
+| --- | --- |
+| Trigger repo indexing | ✅ `cursorai.action.repo.indexMainRepository` (returns null, no completion signal) |
+| Read indexing status / events | ❌ `vscode.cursor.onDidChangeIndexingStatus`, `shouldIndexNewRepos`, `indexingGrepEnabled` all gated |
+| Trigger semantic search programmatically | ❌ `vscode.cursor.getSemanticSearchResultsFromServer` gated |
+| Read `cursor.semanticSearch.*` config | ✅ standard `vscode.workspace.getConfiguration("cursor.semanticSearch")` — already reachable via `/workspace/configuration?section=cursor.semanticSearch` |
+| Get ripgrep binary path | ✅ `vscode.cursor.rgPath` — one of the few non-function cursor.* properties not gated. Returns `c:\Users\…\cursor\resources\app\node_modules\@vscode\ripgrep\bin\rg.exe`. |
+| `cursor.checkOkToIndexLink` | ⚠️ **interactive** — timed out at 10s during probe. Shows a permission dialog. Not safe to expose without explicit user-consent handling. |
+
+**Nothing earns its keep here.** Triggering indexing is one `/commands/execute cursorai.action.repo.indexMainRepository` away. Status reading is closed. The `rgPath` is reachable via `/dev/eval` if anyone needs it; not worth a permanent endpoint.
+
+### Area #5: MCP tool invocation ❌ completely closed
+
+| Capability | Result |
+| --- | --- |
+| List enabled MCP server IDs | ❌ `vscode.cursor.getEnabledMcpServerIds()` gated |
+| List enabled MCP tools | ❌ `vscode.cursor.getEnabledMcpTools()` gated |
+| Get MCP snapshot per server | ❌ `getMcpSnapshot(s)`, `getMcpSnapshotTools`, `getMcpServerTools` all gated |
+| Call an MCP tool by name | ❌ `vscode.cursor.callMcpLeaseTool` gated |
+| Read MCP lease resources/prompts/instructions | ❌ `getMcpLeaseServers/Resources/Prompt(s)/Instructions`, `readMcpLeaseResource` all gated |
+| `vscode.lm.tools` registry (standard) | ❌ empty even with active MCP servers — Cursor doesn't bridge MCP tools to the standard LM registry |
+| `mcp.*` commands (19 total) | ⚠️ system-level only (probe/refresh/oauth/diskKV/elicitation) — no "call a tool" entry point |
+
+**Trigger commands** that work (no return value, no observable effect from outside): `mcp.probeAllServers`, `mcp.refreshSnapshot`, `mcp.reloadClient`, `mcp.retryExhaustedServers`.
+
+**What's reachable through existing endpoints (recipes):**
+
+- Configured servers: `/workspace/readFile` on `~/.cursor/mcp.json` (warn re: secrets in response)
+- Active servers (best-effort): filter `/commands/list` for `workbench.action.output.show.anysphere.cursor-mcp.MCP <id>.workspaceId-…`
+
+**Verdict.** No endpoint to build. Cursor's MCP is a closed subsystem for third-party extensions. If you need to actually CALL an MCP tool from agent automation, the path is to talk to the MCP server directly (stdio/http per the `mcp.json` config) rather than through Cursor.
+
+### Area #6: Cmd-K inline edit ❌ closed
+
+| Capability | Result |
+| --- | --- |
+| Trigger Cmd-K inline edit programmatically | ❌ `aipopup.action.modal.generate` returns null for all 6 arg shapes (string, `{prompt}`, `{query}`, `{text}`, `{input}`, undefined). UI-only. |
+| Read suggested diff | ❌ no extraction command |
+| Accept generated edit | ❌ no `accept` command — only `aipopup.action.closePromptBar` |
+
+**Net:** Cmd-K is locked behind UI keyboard events. The 9 `aipopup.*`/`cmdK.*` commands available are all UI dispatchers, not callable workflows.
+
+### Area #7: Cursor Rules ⚠️ file-based recipe
+
+| Capability | Result |
+| --- | --- |
+| `vscode.cursor.registerCursorRulesProvider` / `updateCursorRules(InBatches)` / `onDidChangeCursorIgnoredFiles` | ❌ all gated |
+| Read / write rules | ✅ **file-based** — `<workspace>/.cursor/rules/*.mdc` (modern) and `<workspace>/.cursorrules` (legacy), plus `~/.cursor/rules/` user-level. All reachable via existing `/workspace/readFile`, `/workspace/findFiles`, `/workspace/writeFile`. |
+| `cursor.createRuleFromSelection` / `workbench.action.newCursorRule` | ✅ commands exist (UI-only) — open the rule editor |
+
+**Recipe** (no endpoint needed):
+
+```bash
+vsc -d '{"include":"**/.cursor/rules/**/*.mdc"}' $BASE/workspace/findFiles
+vsc -d '{"uri":"file:///<workspace>/.cursor/rules/my-rule.mdc"}' $BASE/workspace/readFile
+```
+
+### Area #8: Hooks ⚠️ file-based recipe
+
+| Capability | Result |
+| --- | --- |
+| `vscode.cursor.getConfiguredHooks` / `getHookExecutor` / `onDidChangeHooks` | ❌ all gated |
+| `cursor.hooks.initializeUserHooks` command | ✅ initializes the user's hooks directory — UI-side |
+| Read configured hooks | ✅ **file-based** — `~/.cursor/hooks/` and workspace `.cursor/hooks/` directories. Reachable via existing `/workspace/readFile`/`findFiles`. |
+
+Same pattern as Rules — recipe, no dedicated endpoint.
+
+### Area #9: Background composers ⚠️ mostly UI
+
+| Capability | Result |
+| --- | --- |
+| Read background composer info | ✅ `composer.getBackgroundComposerInfo` returns null when none running; presumably returns state when one is. Reachable via `/commands/execute composer.getBackgroundComposerInfo`. |
+| Apply / archive / checkout / open cloud agent | ✅ commands exist but UI-only (`workbench.action.backgroundComposer.{applyChangesLocally,archive,checkoutLocally,openCloudAgentById,openMachine,openForwardedPort}`). Run via `/commands/execute` with proper args (unverified shape). |
+| Stream background-composer progress | ❌ no public event source |
+
+**Verdict.** The info-read is a one-line `/commands/execute` recipe. The control commands are reachable via `/commands/execute` but would need arg-shape verification under a real cloud-agent session. No dedicated endpoint earns its keep yet.
+
+### Area #10: Sub-agents ✅ already covered
+
+| Capability | Result |
+| --- | --- |
+| `vscode.cursor.registerSubagentsProvider` | ❌ gated |
+| List sub-agents per composer | ✅ already in `/cursor/agents` — fields `subagentComposerIds` + `subComposerIds`, count via `subAgentCount` |
+| `glass.openSubagentPreviewInAgentsTray` | ✅ UI command |
+
+**Verdict.** Nothing new — already covered by area #1's endpoint.
+
+### Open follow-up: new event source `onCursorAgentChanged` on the existing bus
+
+Not a new endpoint or SSE stream — just one more name registered on the shared `EventBus`, alongside `onDebugAdapterEvent`, `onDidSaveTextDocument`, etc. Callers reach it via the existing `/events?subscribe=onCursorAgentChanged` and `/events/wait?subscribe=onCursorAgentChanged&filter=…`.
+
+Two implementation candidates:
+
+1. **Direct subscribe.** `composer.getComposerHandleById().manager` is a vscode-emitter-like object — methods may include `onDidChange*`-style hooks somewhere in its disposable graph. Need to inspect the prototype for a public event we can dispose safely. Highest fidelity, most fragile.
+2. **Polled-emit.** Inside the extension host, set up a small poll loop on `loadedComposers.byId`, diff against the last-seen state, emit `onCursorAgentChanged` with the delta (added/changed message ids, new status, etc.). Predictable, doesn't depend on Cursor internals beyond what `/cursor/agents` already uses.
+
+Probably (2) — same fragility profile as the snapshot endpoint, no new private-API dependency. Defer until probe-loop finishes; build last so we don't keep restarting Cursor EDH while probing other areas.
 
 ### What we'd need to build vs. what's a recipe
 
