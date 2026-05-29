@@ -12,11 +12,6 @@ export interface DevDeps {
   registry: EndpointRegistry;
 }
 
-/**
- * Dev-only routes — only registered when `context.extensionMode === Development`.
- * Never present on marketplace builds. The eval endpoint is a master key into the
- * extension host and would be a remote-code-exec hazard otherwise.
- */
 export function registerDevRoutes(registry: EndpointRegistry, owner: string, deps: DevDeps): void {
   const reg = (def: Parameters<EndpointRegistry['register']>[0]) =>
     registry.register({ tag: 'dev', ...def }, owner);

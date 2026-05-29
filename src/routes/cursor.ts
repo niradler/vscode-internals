@@ -1,27 +1,8 @@
 import * as vscode from 'vscode';
 import type { EndpointRegistry } from '../registry';
 
-/**
- * Cursor-specific routes. Only registered when the host is Cursor — see `detectCursor`.
- * Hidden entirely (not just `{supported:false}`) on VSCode so they don't pollute the
- * OpenAPI surface for users who can't use them.
- *
- * Routes here lean on Cursor's private extension-host state. They work today because
- * the extension-host JS exposes the live composer manager through
- * `composer.getComposerHandleById(id).manager.loadedComposers.byId` — but that shape
- * is internal to Cursor and may change. Each shape-coupled handler is annotated below.
- *
- * Confirmed gaps via /dev/eval probing on Cursor 1.105.1 (cursorVersion 3.5.38):
- * - No public path to programmatically submit a prompt to a composer. `composer.sendToAgent`,
- *   `composer.startComposerPrompt(2)`, `glass.newAgentWithQuery` all accept args but produce
- *   no observable state change when called via /commands/execute. The submit path is
- *   locked behind UI keyboard events that an extension host can't synthesize.
- * - `vscode.cursor.*` API is gated to built-in extensions; calls throw at runtime.
- * - `vscode.chat.createChatParticipant` works (we can register a chat participant Cursor
- *   invokes) — that's the inverse direction and a separate feature, not in scope here.
- */
 export function registerCursorRoutes(registry: EndpointRegistry, owner: string): void {
-  if (!detectCursor()) return; // hidden from VSCode entirely
+  if (!detectCursor()) return;
 
   const reg = (def: Parameters<EndpointRegistry['register']>[0]) =>
     registry.register({ tag: 'cursor', ...def }, owner);
@@ -140,10 +121,7 @@ function detectCursor(): boolean {
 }
 
 async function loadComposerRegistry(): Promise<Record<string, unknown> | null> {
-  // composer.getComposerHandleById requires a known id to bootstrap; once we have any
-  // handle, the manager + loadedComposers.byId map is the registry of ALL composers.
-  // To bootstrap, we use whichever id is currently selected. If none is selected and
-  // no composers exist yet, the registry is effectively empty.
+  // Any handle exposes the full byId registry via its manager — bootstrap from the selected id.
   const selected = await safeExec<string[]>('composer.getOrderedSelectedComposerIds');
   const seedId = selected?.[0];
   if (!seedId) return {};
@@ -169,9 +147,7 @@ function arrayLength(v: unknown): number {
 }
 
 function sanitizeConversationMap(v: unknown): unknown {
-  // conversationMap is a plain object keyed by message id. Keep keys + a small subset
-  // of fields per message to avoid pulling in webview-bound state that explodes on
-  // serialization. Caller can drill via /dev/eval if they need raw.
+  // Field-pick avoids the 24MB+ explosion seen when serializing the full webview-bound bubble shape.
   if (!v || typeof v !== 'object') return v;
   const out: Record<string, unknown> = {};
   for (const [k, msg] of Object.entries(v as Record<string, unknown>)) {
