@@ -8,7 +8,7 @@ import { Logger, type LogLevel } from './logger';
 import { EndpointRegistry, type EndpointDefinition } from './registry';
 import { Serializer } from './serializer';
 import { InternalsServer } from './server';
-import { registerAllBuiltinRoutes } from './routes';
+import { registerAllBuiltinRoutes, registerDevRoutes } from './routes';
 
 const EXTENSION_VERSION = '0.1.0';
 const OUTPUT_CHANNEL_NAME = 'VSCode Internals';
@@ -60,6 +60,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
   );
 
   registerAllBuiltinRoutes(registry, CORE_OWNER_ID);
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    registerDevRoutes(registry, CORE_OWNER_ID, { events, logger, registry });
+    logger.warn('Dev routes enabled (/dev/eval, /dev/info) — extensionMode=Development');
+  }
   logger.info(`Registered ${registry.list().length} built-in endpoints`);
 
   // Make sure a token exists before binding — the SecretStorage call is async.

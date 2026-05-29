@@ -21,6 +21,7 @@ export function registerEnvRoutes(registry: EndpointRegistry, owner: string): vo
       shell: vscode.env.shell,
       isTelemetryEnabled: vscode.env.isTelemetryEnabled,
       uiKind: vscode.UIKind[vscode.env.uiKind],
+      cursorVersion: (vscode as unknown as { cursorVersion?: string }).cursorVersion ?? null,
     }),
   });
 
