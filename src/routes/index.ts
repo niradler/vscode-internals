@@ -1,6 +1,7 @@
 import type { EndpointRegistry } from '../registry';
 import { registerAuthenticationRoutes } from './authentication';
 import { registerCommandsRoutes } from './commands';
+import { registerCursorRoutes } from './cursor';
 import { registerDebugRoutes } from './debug';
 import { registerDevRoutes, type DevDeps } from './dev';
 import { registerEnvRoutes } from './env';
@@ -34,4 +35,5 @@ export function registerAllBuiltinRoutes(registry: EndpointRegistry, ownerId: st
   registerPortsRoutes(registry, ownerId);
   registerAuthenticationRoutes(registry, ownerId);
   registerExtensionsRoutes(registry, ownerId);
+  registerCursorRoutes(registry, ownerId);
 }

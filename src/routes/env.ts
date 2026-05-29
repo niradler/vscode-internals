@@ -21,6 +21,9 @@ export function registerEnvRoutes(registry: EndpointRegistry, owner: string): vo
       shell: vscode.env.shell,
       isTelemetryEnabled: vscode.env.isTelemetryEnabled,
       uiKind: vscode.UIKind[vscode.env.uiKind],
+      // Forks may expose extra version constants. Cursor sets `vscode.cursorVersion` to its build version
+      // (distinct from `vscode.version`, which reports the VSCode base). Null on stock VSCode.
+      cursorVersion: (vscode as unknown as { cursorVersion?: string }).cursorVersion ?? null,
     }),
   });
 

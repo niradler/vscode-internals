@@ -125,19 +125,15 @@ The agents view itself = the `glass` webview. No introspection API for messages 
 | Cmd-K inline edit | ✅ via `aipopup.action.modal.generate` (signature unverified) |
 | Trigger/accept/reject Tab autocomplete | ❌ no programmatic command surface found |
 
-## Proposed extension additions
+## Extension additions in this PR
 
-### Tier 1 — works today with no API gates
+Four `/cursor/*` routes — each does something `/commands/execute` alone can't. Pure passthroughs (e.g. `glass.newAgent`, `glass.newAgentWithQuery`, `composer.getOrderedSelectedComposerIds`, `glass.openAgentById`) are reachable via `/commands/execute` and don't earn dedicated routes.
 
-- **`GET /cursor/detect`** — returns `{isCursor, version, cursorVersion, hostType}`. Lets clients branch behavior. 10 lines.
-- **`GET /cursor/commands`** — pre-filtered Cursor command surface grouped by namespace.
-- **`GET /cursor/mcp/configured`** — read user + workspace `mcp.json` files. Optionally redact bearer tokens/secrets in the response (or accept a `revealSecrets` flag).
-- **`GET /cursor/mcp/active`** — scrape output-channel command names to list active server IDs. Workaround until/unless Cursor exposes a public API.
-- **`POST /cursor/agents/new`** — wraps `glass.newAgent`.
-- **`POST /cursor/agents/newWithQuery`** — `{query: string}`. Wraps `glass.newAgentWithQuery`. **The most useful one** — gives agents the "ask the user" → "go to Cursor" flow.
-- **`GET /cursor/agents/selected`** — wraps `composer.getOrderedSelectedComposerIds`.
-- **`POST /cursor/agents/openById`** — `{id}`. Wraps `glass.openAgentById`.
-- **`POST /cursor/chatEditing/accept`** / **`/discard`** — accept/discard agent's pending edits.
+- **`GET /env/info`** — augmented with `cursorVersion` (Cursor's build version, distinct from VSCode base `version`). Caller computes `isCursor = appName === "Cursor"` themselves.
+- **`GET /cursor/mcp/configured?revealSecrets=false`** — reads `~/.cursor/mcp.json` + `<ws>/.cursor/mcp.json` from disk, redacts bearer tokens / `Authorization` / `apiKey` / `token` / `secret` fields by default. Heuristic also catches `Bearer …` / `gho_…` / `sk-…` / `xoxb-…` token strings even under non-secret keys.
+- **`GET /cursor/mcp/active`** — scrapes `workbench.action.output.show.anysphere.cursor-mcp.MCP <id>.workspaceId-…` command names to list active server IDs. Workaround for missing public API; swap to a real one if Cursor publishes it.
+- **`POST /cursor/chatEditing/accept {path?}`** — `path` present → `chatEditing.acceptFile` with `vscode.Uri.file(path)`; absent → `chatEditing.acceptAllFiles`. The Uri wrap is the load-bearing part — `/commands/execute` passes JSON args verbatim, so calling `acceptFile` with a string path wouldn't work.
+- **`POST /cursor/chatEditing/discard {path?}`** — same branching for `discardFile` / `discardAllFiles`.
 
 ### Tier 2 — needs more verification first
 
@@ -157,16 +153,28 @@ The agents view itself = the `glass` webview. No introspection API for messages 
 - **Cursor-published events** — none of `vscode.cursor.onDid*` events are reachable from a non-built-in extension. Without them, `/cursor/agents/list` requires polling.
 - **MCP tool list** — short of talking to each MCP server directly via its declared transport (stdio/http), no API path. Worth investigating later if/when there's a real use case.
 
-## Implementation order
+## Drive Cursor without dedicated routes
 
-1. **`/dev/eval`** — done (this PR).
-2. **`/cursor/detect` + `/cursor/commands` + `/cursor/mcp/configured`** — read-side, ~30 min, no risk.
-3. **`/cursor/agents/newWithQuery`** — the highest-leverage write-side endpoint. Lets agents hand off to Cursor's chat. ~10 min.
-4. **`/cursor/chatEditing/accept` + `/discard`** — closes the human-in-the-loop edit acceptance flow.
-5. Tier 2 items only as real use cases land.
+The endpoints that didn't earn their own route — every caller can use `/commands/execute` directly:
+
+```bash
+# Open a new agent
+vsc -d '{"command":"glass.newAgent"}' $BASE/commands/execute
+
+# Open a new agent pre-filled with a prompt (the user-equivalent path)
+vsc -d '{"command":"glass.newAgentWithQuery","args":["What is 5+5?"]}' $BASE/commands/execute
+
+# Which composer ids are currently open?
+vsc -d '{"command":"composer.getOrderedSelectedComposerIds"}' $BASE/commands/execute
+
+# Open an existing agent by id
+vsc -d '{"command":"glass.openAgentById","args":["7ec8ee75-…"]}' $BASE/commands/execute
+```
+
+Branch on `(GET /env/info).appName === "Cursor"` first if you need cross-host safety.
 
 ## Skill updates
 
-- Add `skills/vscode-automation/references/cursor.md` describing the `/cursor/*` routes and the `/dev/info`-based host detection pattern.
+- Add `skills/vscode-automation/references/cursor.md` describing the four `/cursor/*` routes, the `appName === "Cursor"` host-detection pattern, and the `/commands/execute` recipes above for the operations without dedicated routes.
 - Cross-link from `endpoints.md` and `SKILL.md`.
 - Document `/dev/eval` in a separate `skills/vscode-automation/references/dev.md` — dev-mode only — with the host-detection precondition and the security warning about secret leakage.
