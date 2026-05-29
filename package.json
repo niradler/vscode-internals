@@ -2,7 +2,7 @@
   "name": "vscode-internals",
   "displayName": "VSCode Internals",
   "description": "Expose the full vscode.* API as a token-protected local REST + SSE service with dynamic OpenAPI. Spiritual successor to vs-rest-api.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "niradler",
   "license": "MIT",
   "icon": "icon.png",
