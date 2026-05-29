@@ -59,30 +59,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
       host: config.host,
       maxBodySizeBytes: config.maxBodySizeBytes,
       version: EXTENSION_VERSION,
+      portAutoIncrement: config.portAutoIncrement,
+      portAutoIncrementMax: config.portAutoIncrementMax,
     },
   );
 
+  const devMode = isDevModeActive(context, config);
+
   registerAllBuiltinRoutes(registry, CORE_OWNER_ID);
-  if (context.extensionMode === vscode.ExtensionMode.Development) {
+  if (devMode) {
     registerDevRoutes(registry, CORE_OWNER_ID, { events, logger, registry });
-    logger.warn('Dev routes enabled (/dev/eval, /dev/info) — extensionMode=Development');
+    const reason = context.extensionMode === vscode.ExtensionMode.Development
+      ? 'extensionMode=Development'
+      : 'vscodeInternals.devMode=true';
+    logger.warn(`Dev routes enabled (/dev/eval, /dev/info) — ${reason}`);
   }
   logger.info(`Registered ${registry.list().length} built-in endpoints`);
 
   // Make sure a token exists before binding — the SecretStorage call is async.
   const initialToken = await tokens.getOrCreate();
 
-  // In Extension Development Host mode, drop the token + base URL to a well-known
-  // temp file so the E2E runner can pick them up without a user round-trip.
-  // Never written outside development mode.
-  if (context.extensionMode === vscode.ExtensionMode.Development) {
-    writeDevHandshakeFile(initialToken, config, logger);
-  }
-
   if (config.autoStart) {
     try {
       await server.start();
-      warnIfNonLoopback(config.host);
+      if (config.showStartupNotifications) {
+        warnIfNonLoopback(config.host);
+        notifyIfPortBumped(config.port, server.port);
+      }
     } catch (err) {
       logger.error('Failed to start server', err);
       void vscode.window.showErrorMessage(
@@ -91,8 +94,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
     }
   }
 
-  createStatusBar(context);
-  registerCommands(context);
+  // Drop the token + base URL to a well-known temp file so a local E2E runner can
+  // pick them up without a user round-trip. Written AFTER start() so the recorded
+  // URL reflects any port bump that happened. Only written when dev mode is active
+  // — never for plain marketplace installs.
+  if (devMode) {
+    writeDevHandshakeFile(initialToken, server.url, server.port, logger);
+  }
+
+  if (config.showStatusBar) createStatusBar(context);
+  registerCommands(context, devMode);
   registerConfigWatcher(context);
 
   context.subscriptions.push({
@@ -131,6 +142,11 @@ interface RuntimeConfig {
   autoStart: boolean;
   maxBodySizeBytes: number;
   logLevel: LogLevel;
+  portAutoIncrement: boolean;
+  portAutoIncrementMax: number;
+  devMode: boolean;
+  showStatusBar: boolean;
+  showStartupNotifications: boolean;
 }
 
 function readConfig(): RuntimeConfig {
@@ -143,7 +159,22 @@ function readConfig(): RuntimeConfig {
     autoStart: c.get<boolean>('autoStart', true),
     maxBodySizeBytes: c.get<number>('maxBodySizeBytes', 10 * 1024 * 1024),
     logLevel: c.get<LogLevel>('logLevel', 'info'),
+    portAutoIncrement: c.get<boolean>('portAutoIncrement', true),
+    portAutoIncrementMax: c.get<number>('portAutoIncrementMax', 20),
+    devMode: c.get<boolean>('devMode', false),
+    showStatusBar: c.get<boolean>('showStatusBar', true),
+    showStartupNotifications: c.get<boolean>('showStartupNotifications', true),
   };
+}
+
+/**
+ * True if dev features should be enabled — either VSCode launched us as an Extension
+ * Development Host, OR the user opted in via `vscodeInternals.devMode`. Dev features
+ * include `/dev/eval` (arbitrary code execution), `/dev/info`, the `vscodeInternals.restart`
+ * command, and the dev-handshake file.
+ */
+function isDevModeActive(context: vscode.ExtensionContext, config: RuntimeConfig): boolean {
+  return context.extensionMode === vscode.ExtensionMode.Development || config.devMode;
 }
 
 function warnIfNonLoopback(host: string): void {
@@ -153,6 +184,14 @@ function warnIfNonLoopback(host: string): void {
       `Anyone reaching this port and obtaining the token can drive your VSCode.`,
     );
   }
+}
+
+function notifyIfPortBumped(configuredPort: number, actualPort: number): void {
+  if (actualPort === configuredPort) return;
+  void vscode.window.showInformationMessage(
+    `VSCode Internals: port ${configuredPort} was in use, bound to ${actualPort} instead. ` +
+    `Use the status bar or "Show Server Status" command to copy the current URL.`,
+  );
 }
 
 function createStatusBar(context: vscode.ExtensionContext): void {
@@ -174,7 +213,7 @@ function updateStatusBar(): void {
   }
 }
 
-function registerCommands(context: vscode.ExtensionContext): void {
+function registerCommands(context: vscode.ExtensionContext, devMode: boolean): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('vscodeInternals.showToken', async () => {
       const token = await tokens!.getOrCreate();
@@ -231,11 +270,12 @@ function registerCommands(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Dev-only: soft-restart the HTTP server in place. Not registered in production
-  // because it's primarily a test-harness affordance (lets the E2E runner cycle
-  // the server without reloading the entire VSCode window). End users should use
-  // the standard "Reload Window" command after changing port/host settings.
-  if (context.extensionMode === vscode.ExtensionMode.Development) {
+  // Soft-restart the HTTP server in place. Gated behind dev mode (either
+  // extensionMode=Development or vscodeInternals.devMode=true) because it's
+  // primarily a test-harness affordance (lets the E2E runner cycle the server
+  // without reloading the entire VSCode window). End users should use the
+  // standard "Reload Window" command after changing port/host settings.
+  if (devMode) {
     context.subscriptions.push(
       vscode.commands.registerCommand('vscodeInternals.restart', async () => {
         // Schedule the work on the next tick so a caller invoking this via the HTTP API
@@ -252,11 +292,16 @@ function registerCommands(context: vscode.ExtensionContext): void {
               host: config.host,
               maxBodySizeBytes: config.maxBodySizeBytes,
               version: EXTENSION_VERSION,
+              portAutoIncrement: config.portAutoIncrement,
+              portAutoIncrementMax: config.portAutoIncrementMax,
             },
           );
           try {
             await server.start();
-            warnIfNonLoopback(config.host);
+            if (config.showStartupNotifications) {
+              warnIfNonLoopback(config.host);
+              notifyIfPortBumped(config.port, server.port);
+            }
             updateStatusBar();
             void vscode.window.showInformationMessage(`VSCode Internals restarted on ${server.url}`);
           } catch (err) {
@@ -271,17 +316,25 @@ function registerCommands(context: vscode.ExtensionContext): void {
 }
 
 function registerConfigWatcher(context: vscode.ExtensionContext): void {
+  // Keys that only take effect at activation time — toggling them at runtime
+  // requires a window reload to rebuild routes, the status bar, the server, etc.
+  const RELOAD_REQUIRED_KEYS = [
+    'vscodeInternals.port',
+    'vscodeInternals.host',
+    'vscodeInternals.maxBodySizeBytes',
+    'vscodeInternals.portAutoIncrement',
+    'vscodeInternals.portAutoIncrementMax',
+    'vscodeInternals.devMode',
+    'vscodeInternals.showStatusBar',
+    'vscodeInternals.autoStart',
+  ];
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('vscodeInternals')) return;
       const cfg = readConfig();
       logger?.setLevel(cfg.logLevel);
-      // port/host/body-size changes need a restart — prompt the user.
-      if (
-        e.affectsConfiguration('vscodeInternals.port') ||
-        e.affectsConfiguration('vscodeInternals.host') ||
-        e.affectsConfiguration('vscodeInternals.maxBodySizeBytes')
-      ) {
+      if (RELOAD_REQUIRED_KEYS.some((k) => e.affectsConfiguration(k))) {
         void vscode.window
           .showInformationMessage(
             'VSCode Internals: server settings changed. Reload the window to apply.',
@@ -310,12 +363,15 @@ function inferCallerExtensionId(_ctx: vscode.ExtensionContext): string | undefin
  * Dev-only: write {url, token} JSON to `<tmpdir>/niradler.vscode-internals.dev.json`
  * so a local E2E script can talk to a freshly-launched Extension Development Host
  * without prompting the user. Never called in production.
+ *
+ * Called AFTER `server.start()` so `url`/`port` reflect any port auto-bump.
  */
-function writeDevHandshakeFile(token: string, config: RuntimeConfig, log: Logger): void {
+function writeDevHandshakeFile(token: string, url: string, port: number, log: Logger): void {
   try {
     const file = path.join(os.tmpdir(), 'niradler.vscode-internals.dev.json');
     const payload = {
-      url: `http://${config.host}:${config.port}`,
+      url,
+      port,
       token,
       pid: process.pid,
       writtenAt: new Date().toISOString(),

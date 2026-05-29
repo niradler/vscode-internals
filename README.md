@@ -49,8 +49,8 @@ code --install-extension vscode-internals-0.1.0.vsix
 On activation the extension:
 
 1. Generates a token (if none exists) and stores it in SecretStorage.
-2. Starts an Express server on `127.0.0.1:7891`.
-3. Adds a status bar item showing the port.
+2. Starts an Express server on `127.0.0.1:7891`. If that port is already in use (e.g. another VSCode window is running the extension), it auto-bumps to `7892`, `7893`, … up to twenty tries — multiple VSCode windows coexist without manual setup.
+3. Adds a status bar item showing the bound port.
 
 Get your token:
 
@@ -67,11 +67,16 @@ Open the API docs:
 
 | Setting | Default | Notes |
 |---|---|---|
-| `vscodeInternals.port` | `7891` | Restart required. |
+| `vscodeInternals.port` | `7891` | Preferred port. If in use, see `portAutoIncrement` below. Restart required. |
+| `vscodeInternals.portAutoIncrement` | `true` | On `EADDRINUSE`, bump to the next port (up to `portAutoIncrementMax` times). Lets multiple VSCode windows coexist. Disable to enforce a strict port. |
+| `vscodeInternals.portAutoIncrementMax` | `20` | Max bump attempts. `0` is equivalent to `portAutoIncrement: false`. |
 | `vscodeInternals.host` | `127.0.0.1` | Loopback only. `0.0.0.0` exposes you over the network — only do this if you understand the implications. |
 | `vscodeInternals.autoStart` | `true` | Set false to start manually via the restart command. |
 | `vscodeInternals.maxBodySizeBytes` | `10485760` | 10 MiB. Increase to send large file contents. |
 | `vscodeInternals.logLevel` | `info` | `error` / `warn` / `info` / `debug`. See the **VSCode Internals** output channel. |
+| `vscodeInternals.showStatusBar` | `true` | Show the status-bar item. The server runs regardless. Reload required. |
+| `vscodeInternals.showStartupNotifications` | `true` | Show the port-bump toast and non-loopback warning at startup. Errors are always shown. |
+| `vscodeInternals.devMode` | `false` | ⚠️ **Dangerous.** Enables `/dev/eval` (arbitrary code execution), `/dev/info`, `vscodeInternals.restart`, and a token-handshake temp file. Anyone with the token can run arbitrary code as your user. Reload required. |
 
 ### Environment variables
 

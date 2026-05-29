@@ -14,6 +14,8 @@ export interface ServerConfig {
   host: string;
   maxBodySizeBytes: number;
   version: string;
+  portAutoIncrement?: boolean;
+  portAutoIncrementMax?: number;
 }
 
 export interface ServerDeps {
@@ -31,6 +33,8 @@ export class InternalsServer {
   private deps: ServerDeps;
   private mountedKey: Set<string> = new Set();
   private rebuildScheduled = false;
+  /** Port the server is actually bound to — may differ from config.port if auto-incremented. */
+  private boundPort?: number;
 
   constructor(deps: ServerDeps, config: ServerConfig) {
     this.deps = deps;
@@ -282,16 +286,65 @@ export class InternalsServer {
 
   async start(): Promise<void> {
     if (this.server) return;
+    const basePort = this.config.port;
+    const bumpEnabled = this.config.portAutoIncrement !== false;
+    const maxBump = bumpEnabled ? Math.max(0, this.config.portAutoIncrementMax ?? 20) : 0;
+    let lastErr: NodeJS.ErrnoException | undefined;
+    for (let offset = 0; offset <= maxBump; offset++) {
+      const candidate = basePort + offset;
+      try {
+        await this.tryListen(candidate);
+        this.boundPort = candidate;
+        if (offset > 0) {
+          this.deps.logger.warn(
+            `Port ${basePort} was in use; server bound to ${candidate} instead (bump=${offset}).`,
+          );
+        } else {
+          this.deps.logger.info(`Listening on http://${this.config.host}:${candidate}`);
+        }
+        return;
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        lastErr = e;
+        if (e.code !== 'EADDRINUSE') throw e;
+        this.deps.logger.debug(`Port ${candidate} in use, trying next`);
+      }
+    }
+    const tried = maxBump > 0
+      ? `ports ${basePort}–${basePort + maxBump}`
+      : `port ${basePort}`;
+    const hint = bumpEnabled
+      ? ` Increase vscodeInternals.portAutoIncrementMax or pick a free starting port.`
+      : ` Enable vscodeInternals.portAutoIncrement to bump automatically.`;
+    const err = new Error(`EADDRINUSE: ${tried} all in use.${hint}`) as NodeJS.ErrnoException;
+    err.code = 'EADDRINUSE';
+    err.cause = lastErr;
+    throw err;
+  }
+
+  /** Try to bind a single port; resolves on success, rejects with the listen error. */
+  private tryListen(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.server = http.createServer(this.app);
-      this.server.on('error', (err) => {
-        this.deps.logger.error('HTTP server error', err);
+      const server = http.createServer(this.app);
+      const onError = (err: NodeJS.ErrnoException) => {
+        server.removeListener('listening', onListening);
+        // Hand the failed server to libuv for cleanup but don't await it — close()
+        // on a server that never reached 'listening' can leave the handle in a state
+        // where awaiting the callback races with libuv shutdown and asserts on Windows.
+        // The fire-and-forget close lets libuv tear down on its own schedule.
+        try { server.close(() => { /* swallow */ }); } catch { /* ignore */ }
         reject(err);
-      });
-      this.server.listen(this.config.port, this.config.host, () => {
-        this.deps.logger.info(`Listening on http://${this.config.host}:${this.config.port}`);
+      };
+      const onListening = () => {
+        server.removeListener('error', onError);
+        // Re-attach a long-lived error listener for runtime errors after a successful bind.
+        server.on('error', (err) => this.deps.logger.error('HTTP server error', err));
+        this.server = server;
         resolve();
-      });
+      };
+      server.once('error', onError);
+      server.once('listening', onListening);
+      server.listen(port, this.config.host);
     });
   }
 
@@ -301,9 +354,15 @@ export class InternalsServer {
       this.server!.close(() => resolve());
     });
     this.server = undefined;
+    this.boundPort = undefined;
+  }
+
+  /** Port the server is actually bound to (may differ from the configured port). */
+  get port(): number {
+    return this.boundPort ?? this.config.port;
   }
 
   get url(): string {
-    return `http://${this.config.host}:${this.config.port}`;
+    return `http://${this.config.host}:${this.port}`;
   }
 }

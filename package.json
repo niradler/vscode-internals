@@ -69,7 +69,18 @@
         "vscodeInternals.port": {
           "type": "number",
           "default": 7891,
-          "description": "Port the local HTTP server binds to. Restart required."
+          "description": "Preferred port the local HTTP server binds to. If the port is already in use (e.g. another VSCode window already has the extension active) and `portAutoIncrement` is enabled, the server tries `port + 1`, `port + 2`, … in turn. Restart required."
+        },
+        "vscodeInternals.portAutoIncrement": {
+          "type": "boolean",
+          "default": true,
+          "description": "On port collision (EADDRINUSE), try the next port up to `portAutoIncrementMax` times before failing. Lets multiple VSCode windows coexist without manual port assignment. Disable to enforce a strict port — the server will refuse to start instead of bumping."
+        },
+        "vscodeInternals.portAutoIncrementMax": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "description": "Maximum number of port-bump attempts when `portAutoIncrement` is enabled. 0 means no bumping (equivalent to `portAutoIncrement: false`)."
         },
         "vscodeInternals.host": {
           "type": "string",
@@ -96,6 +107,21 @@
           ],
           "default": "info",
           "description": "Log verbosity in the VSCode Internals output channel."
+        },
+        "vscodeInternals.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the VSCode Internals item in the status bar. Disable to hide it; the server runs regardless. Reload required."
+        },
+        "vscodeInternals.showStartupNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show informational toasts at server start: the port-bump notification (when the configured port was taken) and the non-loopback host warning. Disable to silence both. Errors are always shown."
+        },
+        "vscodeInternals.devMode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "⚠️ **Dangerous.** Enables `/dev/eval` (arbitrary code execution), `/dev/info`, the `vscodeInternals.restart` command, and writes a token-handshake temp file. Anyone with the token can run arbitrary code as your user. Reload required."
         }
       }
     }
