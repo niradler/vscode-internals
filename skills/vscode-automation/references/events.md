@@ -52,7 +52,7 @@ Always re-check `/events/available` — this is a snapshot.
 
 **Languages**: `onDidChangeDiagnostics` — `data: { uris: [Uri, ...] }`
 
-**Debug**: `onDidStartDebugSession`, `onDidTerminateDebugSession`, `onDidChangeActiveDebugSession`, `onDidChangeBreakpoints`, `onDidReceiveDebugSessionCustomEvent` (DAP-level: `stopped`, `continued`, `output`, `breakpoint`, `thread`, …)
+**Debug**: `onDidStartDebugSession`, `onDidTerminateDebugSession`, `onDidChangeActiveDebugSession`, `onDidChangeBreakpoints`, `onDebugAdapterEvent` (every DAP `event` message: `stopped`, `continued`, `terminated`, `output`, `breakpoint`, `thread`, `module`, `loadedSource`, …), `onDidReceiveDebugSessionCustomEvent` (adapter-defined **custom** events only — does NOT carry standard DAP events; use `onDebugAdapterEvent` for those)
 
 **Notebooks**: `onDidOpenNotebookDocument`, `onDidCloseNotebookDocument`, `onDidChangeNotebookDocument`
 
@@ -121,7 +121,7 @@ Query params:
 - `match=all` — stream all matching events over SSE until timeout, then close
 - `timeoutMs` — `1000`–`300000`, default `30000`
 
-Pattern: agent stepping a debug session and waiting for the next stop.
+Pattern: agent stepping a debug session and waiting for the next stop. Subscribe via `onDebugAdapterEvent` — that source forwards every standard DAP `event` (registered eagerly so trackers attach to sessions even if no one has subscribed yet).
 
 ```bash
 # Fire the step
@@ -129,7 +129,8 @@ vsc -d '{"command":"next","args":{"threadId":1}}' $BASE/debug/customRequest
 
 # Block until the adapter emits a 'stopped' DAP event (or 10s timeout)
 FILTER=$(printf '%s' '{"event":"stopped"}' | jq -sRr @uri)
-vsc "$BASE/events/wait?subscribe=onDidReceiveDebugSessionCustomEvent&filter=$FILTER&timeoutMs=10000"
+vsc "$BASE/events/wait?subscribe=onDebugAdapterEvent&filter=$FILTER&timeoutMs=10000"
+# → { eventName:"onDebugAdapterEvent", payload:{ sessionId, sessionType, sessionName, event:"stopped", body:{ reason, threadId, allThreadsStopped, ... } }, waitedMs }
 ```
 
 The server-side filter is shallow: `filter={"event":"stopped","sessionId":"abc"}` matches when `payload.event === "stopped"` AND `payload.sessionId === "abc"`. No deep paths, no regex, no negation — keep filters simple.

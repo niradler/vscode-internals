@@ -17,8 +17,15 @@ export class EventBus {
 
   constructor(private logger: Logger) {}
 
-  registerEventSource(name: string, factory: EventFactory): void {
+  registerEventSource(name: string, factory: EventFactory, opts?: { eager?: boolean }): void {
     this.factories.set(name, factory);
+    if (opts?.eager) {
+      // Attach immediately and never auto-dispose. Required for sources whose underlying
+      // vscode registration must happen before the first triggering action (e.g. DAP
+      // tracker factories, which only attach to sessions created after registration).
+      const active = this.ensureActive(name);
+      active.attachEagerly();
+    }
   }
 
   listAvailable(): string[] {
@@ -45,7 +52,7 @@ export class EventBus {
       for (const a of attached) {
         a.dispose.dispose();
         const active = this.active.get(a.name);
-        if (active && active.subscriberCount === 0) {
+        if (active && active.subscriberCount === 0 && !active.isEager) {
           active.disposeSource();
           this.active.delete(a.name);
         }
@@ -75,10 +82,23 @@ export type EventFactory = (emit: (payload: unknown) => void) => vscode.Disposab
 class ActiveEvent {
   private subscribers = new Map<number, (eventName: string, payload: unknown) => void>();
   private sourceDisposable?: vscode.Disposable;
+  private eager = false;
 
   constructor(private name: string, private factory: EventFactory, private logger: Logger) {}
 
   get subscriberCount(): number { return this.subscribers.size; }
+  get isEager(): boolean { return this.eager; }
+
+  attachEagerly(): void {
+    if (this.sourceDisposable) return;
+    this.eager = true;
+    try {
+      this.sourceDisposable = this.factory((payload) => this.dispatch(payload));
+    } catch (err) {
+      this.logger.error(`Failed to eagerly register event source ${this.name}`, err);
+      throw err;
+    }
+  }
 
   addSubscriber(id: number, fn: (eventName: string, payload: unknown) => void): vscode.Disposable {
     this.subscribers.set(id, fn);
@@ -98,6 +118,7 @@ class ActiveEvent {
     this.sourceDisposable?.dispose();
     this.sourceDisposable = undefined;
     this.subscribers.clear();
+    this.eager = false;
   }
 
   private dispatch(payload: unknown): void {
@@ -216,6 +237,34 @@ export function registerStandardEvents(bus: EventBus, serializer: Serializer): v
       body: e.body,
     })),
   );
+
+  // Forwards every DAP `event` message (stopped, continued, terminated, output, breakpoint,
+  // thread, module, ...) from any debug adapter to the bus. VSCode's
+  // onDidReceiveDebugSessionCustomEvent only fires for adapter-defined custom events; standard
+  // DAP events are not delivered to extensions through that hook. A DebugAdapterTracker is the
+  // only way to observe them. Eager because the tracker factory only attaches to sessions
+  // created AFTER registration — if we waited for the first subscriber, any session already
+  // running would have no tracker.
+  bus.registerEventSource('onDebugAdapterEvent', (emit) => {
+    return vscode.debug.registerDebugAdapterTrackerFactory('*', {
+      createDebugAdapterTracker(session: vscode.DebugSession): vscode.DebugAdapterTracker {
+        return {
+          onDidSendMessage(message: unknown): void {
+            const m = message as { type?: string; event?: string; body?: unknown };
+            if (m && m.type === 'event' && typeof m.event === 'string') {
+              emit({
+                sessionId: session.id,
+                sessionType: session.type,
+                sessionName: session.name,
+                event: m.event,
+                body: m.body,
+              });
+            }
+          },
+        };
+      },
+    });
+  }, { eager: true });
 
   bus.registerEventSource('onDidOpenTerminal', (emit) =>
     vscode.window.onDidOpenTerminal((t) => emit({ name: t.name, processId: undefined })),
