@@ -91,14 +91,13 @@ export class InstancesRegistry {
   }
 
   private write(data: RegistryFile): void {
-    fs.mkdirSync(REGISTRY_DIR, { recursive: true });
     const tmp = `${REGISTRY_FILE}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, REGISTRY_FILE);
   }
 
   private async withLock(fn: () => void): Promise<void> {
-    fs.mkdirSync(REGISTRY_DIR, { recursive: true });
+    ensureRegistryDir();
     const acquired = await acquireLock(REGISTRY_LOCK, LOCK_TIMEOUT_MS);
     if (!acquired) {
       this.logger.warn(`instances.json lock contended for >${LOCK_TIMEOUT_MS}ms; writing anyway`);
@@ -108,6 +107,23 @@ export class InstancesRegistry {
     } finally {
       try { fs.rmdirSync(REGISTRY_LOCK); } catch { /* ignore */ }
     }
+  }
+}
+
+/**
+ * Create REGISTRY_DIR with 0700 if missing, and tighten the mode if it already
+ * exists with looser permissions (e.g. left over from an earlier build that
+ * created it with the default umask). chmod is a no-op on Windows.
+ */
+function ensureRegistryDir(): void {
+  fs.mkdirSync(REGISTRY_DIR, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') {
+    try {
+      const stat = fs.statSync(REGISTRY_DIR);
+      if ((stat.mode & 0o777) !== 0o700) {
+        fs.chmodSync(REGISTRY_DIR, 0o700);
+      }
+    } catch { /* ignore */ }
   }
 }
 

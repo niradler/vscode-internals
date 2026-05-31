@@ -115,17 +115,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
   registerConfigWatcher(context);
 
   context.subscriptions.push({
-    dispose: async () => {
-      logger?.info('Deactivating');
-      try {
-        await instances?.unregister(vscode.env.sessionId);
-      } catch (err) {
-        logger?.debug(`Failed to unregister instance: ${(err as Error).message}`);
-      }
+    dispose: () => {
+      // Subscription disposables are best-effort and may not be awaited by the
+      // host on shutdown. The async unregister + server.stop work happens in the
+      // exported `deactivate()` below, which VSCode reliably awaits.
       events?.dispose();
-      await server?.stop();
       statusBar?.dispose();
-      logger?.dispose();
     },
   });
 
@@ -145,8 +140,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
   };
 }
 
-export function deactivate(): void {
-  // Resource cleanup handled by context.subscriptions in activate().
+export async function deactivate(): Promise<void> {
+  // VSCode awaits the Promise returned here before tearing down the extension
+  // host, so this is the reliable place for async cleanup. We bound the
+  // unregister with a tight timeout in case the global lock is contended —
+  // a stale entry on disk is acceptable (next boot prunes by pid) but blocking
+  // shutdown is not.
+  logger?.info('Deactivating');
+  try {
+    await Promise.race([
+      instances?.unregister(vscode.env.sessionId) ?? Promise.resolve(),
+      new Promise<void>((resolve) => setTimeout(resolve, 500)),
+    ]);
+  } catch (err) {
+    logger?.debug(`Failed to unregister instance: ${(err as Error).message}`);
+  }
+  try {
+    await server?.stop();
+  } catch (err) {
+    logger?.debug(`server.stop threw: ${(err as Error).message}`);
+  }
+  logger?.dispose();
 }
 
 interface RuntimeConfig {
