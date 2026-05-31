@@ -14,7 +14,7 @@ The extension `niradler.vscode-internals` exposes the full `vscode.*` API as ~11
 Confirm the server is up:
 
 ```bash
-curl -sS http://127.0.0.1:7891/health    # → {"ok":true,"version":"..."}
+curl -sS http://127.0.0.1:7891/health    # → {"ok":true,"version":"...","pid":...,"port":7891,"startedAt":"...","vscode":{...},"workspace":{...}}
 ```
 
 If this fails the extension isn't running — ask the user to open VSCode and confirm `niradler.vscode-internals` is installed and active. Don't try to install or start it yourself.

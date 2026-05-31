@@ -51,6 +51,7 @@ On activation the extension:
 1. Generates a token (if none exists) and stores it in SecretStorage.
 2. Starts an Express server on `127.0.0.1:7891`. If that port is already in use (e.g. another VSCode window is running the extension), it auto-bumps to `7892`, `7893`, … up to twenty tries — multiple VSCode windows coexist without manual setup.
 3. Adds a status bar item showing the bound port.
+4. Registers itself in `~/.vscode-internals/instances.json` so callers can discover every running window on the machine (pid, port, url, workspace folders, startedAt). Dead entries are pruned on every boot; the window removes its own entry on deactivate.
 
 Get your token:
 
@@ -103,7 +104,7 @@ For dev hosts, CI, or any case where settings.json is awkward to set, the bind a
 
 - The token is a 32-byte random value, hex-encoded, prefixed `vscint_`. Stored in `context.secrets`.
 - Every non-public request must send `Authorization: Bearer <token>`. Comparison is constant-time.
-- Public paths (no auth): `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /docs/assets/*`.
+- Public paths (no auth): `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /docs/assets/*`. `GET /health` returns `{ok, version, pid, host, port, startedAt, uptimeMs, vscode:{appName,appHost,version,remoteName,uriScheme,sessionId}, workspace:{name,folders[]}}` — same shape as the instance entry in `~/.vscode-internals/instances.json`. Bound to loopback by default; do not expose to a public network.
 - Bind is loopback by default. If you change `host`, the extension warns and the status bar reflects the non-loopback bind.
 - The extension has no concept of users or roles. **Anyone who has the token can do anything the extension can do**, including running shell commands via tasks and terminals. Treat the token like an SSH key.
 

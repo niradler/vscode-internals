@@ -145,6 +145,25 @@ async function main() {
   await t.run('health (no auth)', async () => {
     const r = await t.req('GET', '/health', { noAuth: true });
     if (!r.ok) throw new Error('health.ok != true');
+    if (typeof r.pid !== 'number') throw new Error('health.pid missing');
+    if (typeof r.port !== 'number') throw new Error('health.port missing');
+    if (typeof r.startedAt !== 'string') throw new Error('health.startedAt missing');
+    if (!r.vscode || typeof r.vscode.appName !== 'string') throw new Error('health.vscode.appName missing');
+    if (!r.workspace || !Array.isArray(r.workspace.folders)) throw new Error('health.workspace.folders missing');
+  });
+
+  await t.run('instances.json registered', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(os.homedir(), '.vscode-internals', 'instances.json');
+    if (!fs.existsSync(file)) throw new Error(`instances.json missing at ${file}`);
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!Array.isArray(data.instances)) throw new Error('instances.json missing instances[]');
+    const mine = data.instances.find((i) => i.pid === health.pid);
+    if (!mine) throw new Error(`no entry for pid=${health.pid} in instances.json`);
+    if (mine.port !== health.port) throw new Error(`instance.port=${mine.port} != health.port=${health.port}`);
+    if (typeof mine.startedAt !== 'string') throw new Error('instance.startedAt missing');
   });
 
   await t.run('openapi.json (no auth, shape)', async () => {

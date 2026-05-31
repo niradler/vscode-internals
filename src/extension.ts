@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { TokenManager } from './auth';
 import { EventBus, registerStandardEvents } from './events';
+import { InstancesRegistry, type InstanceRecord } from './instances';
 import { Logger, type LogLevel } from './logger';
 import { EndpointRegistry, type EndpointDefinition } from './registry';
 import { Serializer } from './serializer';
@@ -24,6 +25,9 @@ let serializer: Serializer | undefined;
 let events: EventBus | undefined;
 let tokens: TokenManager | undefined;
 let statusBar: vscode.StatusBarItem | undefined;
+let instances: InstancesRegistry | undefined;
+/** ISO timestamp set once at activate(); used as the creation date for the global instances.json entry and /health.startedAt. */
+let startedAt: string | undefined;
 
 /**
  * Public API surface — what `extension.exports` exposes to other extensions.
@@ -51,6 +55,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
   events = new EventBus(logger);
   registerStandardEvents(events, serializer);
   tokens = new TokenManager(context.secrets);
+  instances = new InstancesRegistry(logger);
+  startedAt = new Date().toISOString();
 
   server = new InternalsServer(
     { registry, serializer, tokens, events, logger },
@@ -61,6 +67,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
       version: EXTENSION_VERSION,
       portAutoIncrement: config.portAutoIncrement,
       portAutoIncrementMax: config.portAutoIncrementMax,
+      startedAt,
     },
   );
 
@@ -86,6 +93,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
         warnIfNonLoopback(config.host);
         notifyIfPortBumped(config.port, server.port);
       }
+      await registerInstance(instances, server, startedAt, logger);
     } catch (err) {
       logger.error('Failed to start server', err);
       void vscode.window.showErrorMessage(
@@ -109,6 +117,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<VSCode
   context.subscriptions.push({
     dispose: async () => {
       logger?.info('Deactivating');
+      try {
+        await instances?.unregister(vscode.env.sessionId);
+      } catch (err) {
+        logger?.debug(`Failed to unregister instance: ${(err as Error).message}`);
+      }
       events?.dispose();
       await server?.stop();
       statusBar?.dispose();
@@ -294,6 +307,7 @@ function registerCommands(context: vscode.ExtensionContext, devMode: boolean): v
               version: EXTENSION_VERSION,
               portAutoIncrement: config.portAutoIncrement,
               portAutoIncrementMax: config.portAutoIncrementMax,
+              startedAt: startedAt!,
             },
           );
           try {
@@ -302,6 +316,7 @@ function registerCommands(context: vscode.ExtensionContext, devMode: boolean): v
               warnIfNonLoopback(config.host);
               notifyIfPortBumped(config.port, server.port);
             }
+            await registerInstance(instances!, server, startedAt!, logger!);
             updateStatusBar();
             void vscode.window.showInformationMessage(`VSCode Internals restarted on ${server.url}`);
           } catch (err) {
@@ -357,6 +372,42 @@ function inferCallerExtensionId(_ctx: vscode.ExtensionContext): string | undefin
   // Placeholder. The cleanest pattern is for the caller to pass their extension ID
   // alongside the endpoint definition; future API revisions can require that.
   return undefined;
+}
+
+/**
+ * Insert/refresh this window's entry in the global instances registry
+ * (`~/.vscode-internals/instances.json`). Best-effort — never throws.
+ * Called after a successful server.start() so the recorded port reflects
+ * any auto-bump, and again on every soft-restart.
+ */
+async function registerInstance(
+  reg: InstancesRegistry,
+  srv: InternalsServer,
+  started: string,
+  log: Logger,
+): Promise<void> {
+  try {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const rec: InstanceRecord = {
+      sessionId: vscode.env.sessionId,
+      pid: process.pid,
+      host: new URL(srv.url).hostname,
+      port: srv.port,
+      url: srv.url,
+      appName: vscode.env.appName,
+      appHost: vscode.env.appHost,
+      remoteName: vscode.env.remoteName ?? null,
+      workspaceName: vscode.workspace.name ?? null,
+      workspaceFolders: folders.map((f) => f.uri.fsPath),
+      extensionVersion: EXTENSION_VERSION,
+      vscodeVersion: vscode.version,
+      startedAt: started,
+    };
+    await reg.register(rec);
+    log.debug(`Registered instance ${rec.sessionId} → ${rec.url}`);
+  } catch (err) {
+    log.warn(`Failed to register instance: ${(err as Error).message}`);
+  }
 }
 
 /**
