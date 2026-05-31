@@ -63,6 +63,18 @@ Open the API docs:
 - Command Palette → **VSCode Internals: Open API Docs (Swagger UI)** → opens `http://127.0.0.1:7891/docs`
 - Click **Authorize** in Swagger UI and paste your token
 
+## Claude Code skill
+
+This repo ships a companion [`vscode-automation`](skills/vscode-automation) skill that lets Claude Code drive a running VSCode instance through the extension's local API. Install it globally with the [`skills`](https://github.com/vercel-labs/skills) CLI:
+
+```bash
+npx skills add https://github.com/niradler/vscode-internals/tree/main/skills/vscode-automation -g -a claude-code -y
+```
+
+Flags: `-g` installs to `~/.claude/skills/` (available across all projects), `-a claude-code` targets the Claude Code agent, `-y` skips confirmation prompts. Drop `-g` to install into the current project instead, or pass `-a '*'` to install for every supported agent.
+
+Once installed, Claude Code auto-loads the skill whenever you refer to editor state — "the file I have open", "my selection", "go to definition", "run my tests", "the debug session", etc. — and routes the request through `http://127.0.0.1:7891` using the bearer token from SecretStorage. See [`skills/vscode-automation/SKILL.md`](skills/vscode-automation/SKILL.md) for the full trigger list and endpoint coverage.
+
 ## Configuration
 
 | Setting | Default | Notes |
