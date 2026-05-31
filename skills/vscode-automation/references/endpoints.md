@@ -8,7 +8,7 @@ Note on the spec: `/openapi.json` enumerates only registry-tracked routes. The f
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/health` | Liveness check. Returns `{ ok, version, ... }`. |
+| GET | `/health` | Liveness + instance metadata. Returns `{ ok, version, pid, host, port, startedAt, uptimeMs, vscode:{appName,appHost,version,remoteName,uriScheme,sessionId}, workspace:{name,folders[]} }`. Same shape as the per-window record in `~/.vscode-internals/instances.json`. |
 | GET | `/openapi.json` | Live OpenAPI 3.1 spec built from the registry. Excludes public paths and `/events/*`. |
 | GET | `/docs` | Swagger UI (bundled, offline). |
 | GET | `/docs/assets/*` | Swagger UI static assets. |

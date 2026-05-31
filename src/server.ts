@@ -16,6 +16,8 @@ export interface ServerConfig {
   version: string;
   portAutoIncrement?: boolean;
   portAutoIncrementMax?: number;
+  /** ISO timestamp of when this extension instance started. Surfaced via /health and used as the creation date in instances.json. */
+  startedAt: string;
 }
 
 export interface ServerDeps {
@@ -59,7 +61,28 @@ export class InternalsServer {
 
     // Public endpoints (no auth)
     this.app.get('/health', (_req, res) => {
-      res.json({ ok: true, version: this.config.version });
+      const folders = vscode.workspace.workspaceFolders ?? [];
+      res.json({
+        ok: true,
+        version: this.config.version,
+        pid: process.pid,
+        host: this.config.host,
+        port: this.port,
+        startedAt: this.config.startedAt,
+        uptimeMs: Date.now() - new Date(this.config.startedAt).getTime(),
+        vscode: {
+          appName: vscode.env.appName,
+          appHost: vscode.env.appHost,
+          version: vscode.version,
+          remoteName: vscode.env.remoteName ?? null,
+          uriScheme: vscode.env.uriScheme,
+          sessionId: vscode.env.sessionId,
+        },
+        workspace: {
+          name: vscode.workspace.name ?? null,
+          folders: folders.map((f) => f.uri.fsPath),
+        },
+      });
     });
 
     this.app.get('/openapi.json', (req, res) => {

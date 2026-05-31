@@ -14,12 +14,14 @@ The extension `niradler.vscode-internals` exposes the full `vscode.*` API as ~11
 Confirm the server is up:
 
 ```bash
-curl -sS http://127.0.0.1:7891/health    # → {"ok":true,"version":"..."}
+curl -sS http://127.0.0.1:7891/health    # → {"ok":true,"version":"...","pid":...,"port":7891,"startedAt":"...","vscode":{...},"workspace":{...}}
 ```
 
 If this fails the extension isn't running — ask the user to open VSCode and confirm `niradler.vscode-internals` is installed and active. Don't try to install or start it yourself.
 
-**Non-default port.** The user may have remapped the bind via the `vscodeInternals.port` setting or the `VSCODE_INTERNALS_PORT` env var (e.g. dev hosts run on `7892` to coexist with a marketplace install on `7891`). If `/health` 404s or connection-refuses on `7891`, ask the user for the right port and substitute it into `BASE` below. Examples in this skill default to `7891` for readability — swap as needed.
+**Discovering open windows.** `~/.vscode-internals/instances.json` lists every live window with `{pid, url, workspaceFolders, ...}`. Read it first to pick the `url` matching the workspace you want to drive; `curl $url/health` to confirm before using (a hard-killed window can leave a stale row until the next boot).
+
+**Non-default port.** The user may have remapped the bind via the `vscodeInternals.port` setting or the `VSCODE_INTERNALS_PORT` env var (e.g. dev hosts run on `7892` to coexist with a marketplace install on `7891`). If `instances.json` is empty or `/health` 404s/connection-refuses on `7891`, ask the user for the right port and substitute it into `BASE` below. Examples in this skill default to `7891` for readability — swap as needed.
 
 **Get the token.** Generated on first activation (`vscint_` + 32 random bytes), stored in VSCode's `SecretStorage`, persists across restarts. Every non-public call needs `Authorization: Bearer <token>`. Public endpoints (no auth): `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /docs/assets/*`.
 
